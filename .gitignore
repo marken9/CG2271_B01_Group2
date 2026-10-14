@@ -1,0 +1,41 @@
+
+# MCUXpresso workspace metadata
+.metadata/
+
+# MCUXpresso build outputs
+**/Debug/
+**/Release/
+**/*.o
+**/*.elf
+**/*.map
+**/*.d
+**/*.axf
+
+# IDE temporary files
+*.log
+*.tmp
+*.bak
+
+# VS Code
+.vscode/
+
+# Web development
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python (if backend uses Python)
+__pycache__/
+*.pyc
+.venv/
+
+# Operating system files
+.DS_Store
+Thumbs.db
