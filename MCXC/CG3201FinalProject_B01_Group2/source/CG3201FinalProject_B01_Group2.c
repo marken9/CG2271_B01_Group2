@@ -61,7 +61,7 @@
 /* ---------- Sensor Settings ---------- */
 
 /* Change this to 0 if your reed switch operates inverted. */
-#define REED_OPEN_LEVEL     0U
+#define REED_OPEN_LEVEL     1U
 
 #define REED_DEBOUNCE_MS    25U
 
@@ -160,6 +160,9 @@ static void Reed_Init(void) {
     PORT_SetPinMux(REED_PORT,
                    REED_PIN,
                    kPORT_MuxAsGpio);
+    // Enable internal pull-up resistor
+    PORTA->PCR[REED_PIN] |= PORT_PCR_PE_MASK;
+    PORTA->PCR[REED_PIN] |= PORT_PCR_PS_MASK;
 
     GPIO_PinInit(REED_GPIO,
                  REED_PIN,
@@ -590,6 +593,8 @@ static void MonitorTask(void *params) {
         PRINTF("\r\n========== RELICGUARD ==========\r\n");
 
         /* Reed switch */
+//        PRINTF("Reed GPIO Raw: %u\r\n",
+//               (unsigned int)GPIO_PinRead(REED_GPIO, REED_PIN)); //debugging print
         if (snapshot.doorValid) {
             PRINTF(
                 "Door: %s\r\n",
