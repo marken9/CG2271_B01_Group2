@@ -21,7 +21,7 @@ export const DEMO_SCENARIOS = {
   normal: { label: "Normal" },
   humidity: { label: "Humidity out of range" },
   lid: { label: "Lid open" },
-  laser: { label: "Laser beam interrupted" },
+  laser: { label: "Laser beam tripped" },
   offline: { label: "Disconnected" },
 };
 
@@ -158,9 +158,9 @@ export function createDemoSource({ scenario = "normal", intervalMs = 2000, onSam
     const at = (minutes) => now - minutes * 60 * 1000;
 
     return [
-      { at: at(41), kind: "resolved", text: "Lid Closed" },
+      { at: at(41), kind: "resolved", text: "Lid closed" },
       { at: at(43), kind: "ack", text: "Acknowledged: Lid open" },
-      { at: at(44), kind: "caution", text: "Lid open" },
+      { at: at(44), kind: "breach", text: "Lid open" },
       { at: at(132), kind: "info", text: "Sensor feed connected" },
     ];
   }

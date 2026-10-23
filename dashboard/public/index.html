@@ -5,174 +5,144 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RelicGuard · Card Showcase</title>
   <meta name="description" content="Environmental and security monitoring for the RelicGuard card showcase box.">
-  <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#F4F2ED" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#16181B" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#E8E7E1">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=Barlow:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="app.js"></script>
 </head>
 <body>
   <svg class="sprite" aria-hidden="true" focusable="false">
-    <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.75 2.75L16.25 9.5"/></symbol>
-    <symbol id="i-caution" viewBox="0 0 24 24"><path d="M12 3.75 2.75 19.75h18.5z"/><path d="M12 10v4.25"/><path d="M12 17.25h.01"/></symbol>
-    <symbol id="i-breach" viewBox="0 0 24 24"><path d="M8.25 3h7.5L21 8.25v7.5L15.75 21h-7.5L3 15.75v-7.5z"/><path d="M12 7.75v5.5"/><path d="M12 16.25h.01"/></symbol>
-    <symbol id="i-unknown" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-dasharray="3 2.6"/><path d="M8.5 12h7"/></symbol>
-    <symbol id="i-offline" viewBox="0 0 24 24"><path d="M9 17H7a5 5 0 0 1-1.6-9.74"/><path d="M14.5 7H17a5 5 0 0 1 3.1 8.92"/><path d="M8 12h2"/><path d="m3 3 18 18"/></symbol>
+    <symbol id="i-ok" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-caution" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5"/><path d="M12 17.5h.01"/></symbol>
+    <symbol id="i-breach" viewBox="0 0 24 24"><path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2z"/><path d="M12 7.5v6"/><path d="M12 16.5h.01"/></symbol>
+    <symbol id="i-unknown" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-dasharray="3 2.5"/><path d="M8.5 12h7"/></symbol>
+    <symbol id="i-offline" viewBox="0 0 24 24"><path d="M9 17H7a5 5 0 0 1-1.6-9.7"/><path d="M14.5 7H17a5 5 0 0 1 3.1 8.9"/><path d="M8 12h2"/><path d="m3 3 18 18"/></symbol>
     <symbol id="i-lid-closed" viewBox="0 0 24 24"><path d="M4.5 10.5h15V19a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1z"/><path d="M3.5 7.5h17v3h-17z"/></symbol>
     <symbol id="i-lid-open" viewBox="0 0 24 24"><path d="M4.5 10.5h15V19a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1z"/><path d="m3.6 8.4 15.7-5.7 1 2.8-15.7 5.7z"/></symbol>
     <symbol id="i-beam" viewBox="0 0 24 24"><rect x="2.5" y="8.5" width="4" height="7" rx="1"/><rect x="17.5" y="8.5" width="4" height="7" rx="1"/><path d="M6.5 12h11"/></symbol>
-    <symbol id="i-beam-broken" viewBox="0 0 24 24"><rect x="2.5" y="8.5" width="4" height="7" rx="1"/><rect x="17.5" y="8.5" width="4" height="7" rx="1"/><path d="M6.5 12h3.5"/><path d="M14 12h3.5"/><path d="m11 8.5 2 7"/></symbol>
+    <symbol id="i-beam-broken" viewBox="0 0 24 24"><rect x="2.5" y="8.5" width="4" height="7" rx="1"/><rect x="17.5" y="8.5" width="4" height="7" rx="1"/><path d="M6.5 12h3.5M14 12h3.5M11 8.5l2 7"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m5.5 11.5 6.5-6.5 6.5 6.5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m5.5 12.5 6.5 6.5 6.5-6.5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
     <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 7.5V12l3 2"/></symbol>
-    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9"/><path d="M17 7h3"/><path d="M4 17h3"/><path d="M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
-    <symbol id="i-resolved" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
-    <symbol id="i-ack" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/></symbol>
-    <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/></symbol>
   </svg>
 
-  <a class="skip-link" href="#main">Skip to readings</a>
+  <a class="skip-link" href="#params">Skip to readings</a>
 
-  <header class="masthead shell">
-    <div class="masthead-id">
-      <p class="eyebrow" translate="no">RelicGuard</p>
-      <h1>Card Showcase <span class="catalogue">No.&nbsp;01</span></h1>
-    </div>
-
-    <div class="masthead-feed">
-      <p class="feed-pill" id="feed-pill" data-feed="live">
-        <svg class="icon" aria-hidden="true"><use href="#i-dot"></use></svg>
-        <span id="feed-label">Connecting…</span>
+  <div class="console">
+    <header class="top">
+      <h1><span translate="no">RelicGuard</span> Card Showcase</h1>
+      <p class="feed" id="feed" data-feed="offline">
+        <span class="feed-dot" aria-hidden="true"></span>
+        <b id="feed-label">Connecting…</b>
+        <span id="feed-time" hidden>
+          <span id="feed-time-label">Updated</span>
+          <time class="num" id="updated-at"></time>
+          <span aria-hidden="true">·</span>
+          <span id="updated-ago"></span>
+        </span>
       </p>
-      <p class="feed-updated">
-        Updated <time id="updated-at" class="num">—</time>
-        <span class="feed-ago" id="updated-ago"></span>
-      </p>
-    </div>
+    </header>
 
-    <nav class="masthead-actions" aria-label="Details">
-      <button class="btn" type="button" data-open="history-dialog">
+    <section class="band" aria-label="Alarms">
+      <h2 class="visually-hidden">Alarms</h2>
+      <ul class="alarm-list" id="alarm-list" aria-live="polite"></ul>
+    </section>
+
+    <main class="params" id="params" tabindex="-1">
+      <h2 class="visually-hidden">Readings</h2>
+
+      <section class="param" data-metric="temperature" data-state="missing" aria-labelledby="p-temperature">
+        <div class="trace">
+          <h3 class="trace-label" id="p-temperature">Temperature <span>°C · 6 h</span></h3>
+          <div class="trace-plot" aria-hidden="true"></div>
+        </div>
+        <div class="numeric">
+          <p class="value"><span class="v num" data-field="value">-?-</span><span class="unit">°C</span></p>
+          <dl class="limits num">
+            <div><dt>upper</dt><dd data-field="max">—</dd></div>
+            <div><dt>lower</dt><dd data-field="min">—</dd></div>
+          </dl>
+          <p class="status"><svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg><span data-field="status">Waiting for first sample</span></p>
+        </div>
+      </section>
+
+      <section class="param" data-metric="humidity" data-state="missing" aria-labelledby="p-humidity">
+        <div class="trace">
+          <h3 class="trace-label" id="p-humidity">Humidity <span>%&nbsp;RH · 6 h</span></h3>
+          <div class="trace-plot" aria-hidden="true"></div>
+        </div>
+        <div class="numeric">
+          <p class="value"><span class="v num" data-field="value">-?-</span><span class="unit">%&nbsp;RH</span></p>
+          <dl class="limits num">
+            <div><dt>upper</dt><dd data-field="max">—</dd></div>
+            <div><dt>lower</dt><dd data-field="min">—</dd></div>
+          </dl>
+          <p class="status"><svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg><span data-field="status">Waiting for first sample</span></p>
+        </div>
+      </section>
+
+      <section class="param" data-metric="light" data-state="missing" aria-labelledby="p-light">
+        <div class="trace">
+          <h3 class="trace-label" id="p-light">Light <span>lx · 6 h</span></h3>
+          <div class="trace-plot" aria-hidden="true"></div>
+        </div>
+        <div class="numeric">
+          <p class="value"><span class="v num" data-field="value">-?-</span><span class="unit">lx</span></p>
+          <dl class="limits num">
+            <div><dt>upper</dt><dd data-field="max">—</dd></div>
+            <div><dt>lower</dt><dd data-field="min">—</dd></div>
+          </dl>
+          <p class="status"><svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg><span data-field="status">Waiting for first sample</span></p>
+        </div>
+      </section>
+    </main>
+
+    <section class="lower" aria-label="Security and events">
+      <div class="sec" id="seal-lid" data-state="unknown">
+        <h2 class="sec-label">Lid</h2>
+        <p class="sec-state"><svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg><span data-field="text">Unknown</span></p>
+        <p class="sec-sub" data-field="sub"></p>
+      </div>
+      <div class="sec" id="seal-laser" data-state="unknown">
+        <h2 class="sec-label">Laser beam</h2>
+        <p class="sec-state"><svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg><span data-field="text">Unknown</span></p>
+        <p class="sec-sub" data-field="sub"></p>
+      </div>
+      <div class="events">
+        <h2 class="sec-label">Recent events</h2>
+        <ol class="event-list" id="event-list"></ol>
+      </div>
+    </section>
+
+    <nav class="keys" aria-label="Controls">
+      <button class="key key-ack" type="button" id="ack-all" aria-disabled="true">
+        <svg class="icon" aria-hidden="true"><use href="#i-bell"></use></svg>
+        <span id="ack-label">Acknowledge</span>
+      </button>
+      <button class="key" type="button" data-open="history-dialog">
         <svg class="icon" aria-hidden="true"><use href="#i-history"></use></svg>
         History
       </button>
-      <button class="btn" type="button" data-open="thresholds-dialog">
+      <button class="key" type="button" data-open="thresholds-dialog">
         <svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg>
         Thresholds
       </button>
+      <div class="keys-info">
+        <p><strong>Demo data.</strong> Limits are demo values, not conservation standards.</p>
+        <label class="demo-picker">
+          <span>Demo state</span>
+          <select id="demo-state" name="demo-state"></select>
+        </label>
+      </div>
     </nav>
-  </header>
-
-  <main id="main" class="shell" tabindex="-1">
-    <section class="summary" id="summary" data-tone="ok" aria-labelledby="summary-title">
-      <div class="summary-main" aria-live="polite" aria-atomic="true">
-        <svg class="icon summary-icon" aria-hidden="true"><use id="summary-icon" href="#i-ok"></use></svg>
-        <div class="summary-text">
-          <h2 id="summary-title">Waiting for sensor data…</h2>
-          <p class="summary-detail" id="summary-detail"></p>
-          <ul class="summary-issues" id="summary-issues"></ul>
-        </div>
-      </div>
-
-      <dl class="seals">
-        <div class="seal" id="seal-lid" data-state="unknown">
-          <dt>Lid</dt>
-          <dd>
-            <svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg>
-            <span data-field="text">Unknown</span>
-          </dd>
-        </div>
-        <div class="seal" id="seal-laser" data-state="unknown">
-          <dt>Laser beam</dt>
-          <dd>
-            <svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg>
-            <span data-field="text">Unknown</span>
-          </dd>
-        </div>
-      </dl>
-    </section>
-
-    <section class="readings" aria-labelledby="readings-title">
-      <h2 class="section-label" id="readings-title">Current Readings</h2>
-      <div class="readings-grid">
-        <article class="reading" data-metric="temperature" data-state="missing" aria-labelledby="r-temperature">
-          <header class="reading-head">
-            <h3 class="reading-label" id="r-temperature">Temperature</h3>
-            <p class="reading-status">
-              <svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg>
-              <span data-field="status">No reading</span>
-            </p>
-          </header>
-          <p class="reading-value"><span class="reading-number" data-field="value">—</span><span class="reading-unit">°C</span></p>
-          <div class="rail" aria-hidden="true"><span class="rail-band"></span><span class="rail-needle"></span></div>
-          <p class="reading-range">Range <span class="num" data-field="range">—</span> <span class="tag">Demo</span></p>
-          <p class="reading-note" data-field="note"></p>
-        </article>
-
-        <article class="reading" data-metric="humidity" data-state="missing" aria-labelledby="r-humidity">
-          <header class="reading-head">
-            <h3 class="reading-label" id="r-humidity">Humidity</h3>
-            <p class="reading-status">
-              <svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg>
-              <span data-field="status">No reading</span>
-            </p>
-          </header>
-          <p class="reading-value"><span class="reading-number" data-field="value">—</span><span class="reading-unit">%&nbsp;RH</span></p>
-          <div class="rail" aria-hidden="true"><span class="rail-band"></span><span class="rail-needle"></span></div>
-          <p class="reading-range">Range <span class="num" data-field="range">—</span> <span class="tag">Demo</span></p>
-          <p class="reading-note" data-field="note"></p>
-        </article>
-
-        <article class="reading" data-metric="light" data-state="missing" aria-labelledby="r-light">
-          <header class="reading-head">
-            <h3 class="reading-label" id="r-light">Light</h3>
-            <p class="reading-status">
-              <svg class="icon" aria-hidden="true"><use href="#i-unknown"></use></svg>
-              <span data-field="status">No reading</span>
-            </p>
-          </header>
-          <p class="reading-value"><span class="reading-number" data-field="value">—</span><span class="reading-unit">lx</span></p>
-          <div class="rail" aria-hidden="true"><span class="rail-band"></span><span class="rail-needle"></span></div>
-          <p class="reading-range">Range <span class="num" data-field="range">—</span> <span class="tag">Demo</span></p>
-          <p class="reading-note" data-field="note"></p>
-        </article>
-      </div>
-    </section>
-
-    <div class="ledger">
-      <section class="panel" aria-labelledby="alerts-title">
-        <header class="panel-head">
-          <h2 id="alerts-title">Active Alerts</h2>
-          <span class="count num" id="alert-count">0</span>
-        </header>
-        <ul class="alert-list" id="alert-list"></ul>
-        <p class="panel-empty" id="alert-empty">
-          <svg class="icon" aria-hidden="true"><use href="#i-ok"></use></svg>
-          No active alerts.
-        </p>
-      </section>
-
-      <section class="panel" aria-labelledby="events-title">
-        <header class="panel-head">
-          <h2 id="events-title">Recent Events</h2>
-        </header>
-        <ol class="event-list" id="event-list"></ol>
-      </section>
-    </div>
-  </main>
-
-  <footer class="colophon shell">
-    <p>
-      <strong>Demo data.</strong> Not yet connected to the showcase hardware.
-      Thresholds are demo values, not conservation standards.
-    </p>
-    <label class="demo-picker">
-      <span>Demo state</span>
-      <select id="demo-state" name="demo-state"></select>
-    </label>
-  </footer>
+  </div>
 
   <dialog class="sheet" id="thresholds-dialog" aria-labelledby="thresholds-title">
     <form method="dialog" id="thresholds-form" novalidate>

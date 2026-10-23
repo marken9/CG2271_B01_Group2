@@ -22,16 +22,12 @@ const STALE_AFTER_MS = 10_000;
 
 const THRESHOLDS_KEY = "relicguard.thresholds.v1";
 const MAX_EVENTS = 50;
-const VISIBLE_EVENTS = 8;
+const VISIBLE_EVENTS = 3;
 
-const SEVERITY_ICON = { caution: "#i-caution", breach: "#i-breach" };
-const EVENT_ICON = {
-  caution: "#i-caution",
-  breach: "#i-breach",
-  resolved: "#i-resolved",
-  ack: "#i-ack",
-  info: "#i-dot",
-};
+/* Alarm priority by severity, after patient-monitor conventions: breaches are
+ * high priority, limit and feed problems medium, sensor faults technical. */
+const PRIORITY = { breach: "high", caution: "medium", fault: "technical" };
+const PRIORITY_ICON = { breach: "#i-breach", caution: "#i-caution", fault: "#i-unknown" };
 
 /* ============================================================
  * Formatting
@@ -54,8 +50,15 @@ const fmtTime = (ms) => timeFormat.format(ms);
 const fmtShortTime = (ms) => shortTimeFormat.format(ms);
 const fmtAgoPhrase = (ms) => (ms < 2000 ? "just now" : `${fmtAgo(ms)} ago`);
 
+const valueFormats = Object.fromEntries(
+  Object.entries(METRICS).map(([metric, { decimals }]) => [
+    metric,
+    new Intl.NumberFormat(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }),
+  ]),
+);
+
 function fmtValue(metric, value) {
-  return value.toFixed(METRICS[metric].decimals);
+  return valueFormats[metric].format(value);
 }
 
 function fmtRange(metric, range) {
@@ -117,7 +120,7 @@ function saveThresholds(thresholds) {
 const state = {
   sample: null,
   thresholds: loadThresholds(),
-  alerts: new Map(), // key -> { key, severity, title, detail, hint, since, ackAt, unconfirmed }
+  alerts: new Map(), // key -> { key, severity, title, band, detail, since, ackAt, unconfirmed }
   events: [], // { at, kind, text }, newest first
   eventsVersion: 0,
 };
@@ -156,10 +159,10 @@ function evaluate(sample, now, thresholds) {
       key: "feed",
       severity: "caution",
       title: "Sensor feed disconnected",
+      band: "Sensor feed disconnected · readings not current",
       detail: sample
         ? `No data received since ${fmtTime(sample.receivedAt)}. Values shown are the last known readings.`
         : "No data has been received from the showcase yet.",
-      hint: "Readings, lid and beam status are not current.",
       since: sample?.receivedAt,
     });
   } else if (feed === "stale") {
@@ -167,8 +170,8 @@ function evaluate(sample, now, thresholds) {
       key: "feed",
       severity: "caution",
       title: "Sensor data is stale",
+      band: "Sensor data stale · readings not current",
       detail: `Last update at ${fmtTime(sample.receivedAt)}. Values may not reflect current conditions.`,
-      hint: "Readings, lid and beam status are not current.",
       since: sample.receivedAt,
     });
   }
@@ -186,17 +189,17 @@ function evaluate(sample, now, thresholds) {
       conditions.push({
         key: metric,
         severity: "caution",
-        title: `${meta.label} ${direction} range`,
-        detail: `${fmtValue(metric, value)}\u00A0${meta.unit} against a range of ${fmtRange(metric, range)} (demo).`,
-        hint: `${meta.label} is ${direction} the configured range.`,
+        title: `${meta.label} ${direction} limit`,
+        band: `${meta.label} ${status} · ${direction} ${status === "high" ? range.max : range.min}`,
+        detail: `Reading ${fmtValue(metric, value)}\u00A0${meta.unit}. Limits are ${fmtRange(metric, range)} (demo values).`,
       });
     } else if (status === "missing" && feed === "live") {
       conditions.push({
         key: metric,
-        severity: "caution",
+        severity: "fault",
         title: `${meta.label} reading unavailable`,
+        band: `${meta.label} · no valid reading`,
         detail: "The sensor did not return a valid reading.",
-        hint: `${meta.label} cannot be checked.`,
       });
     }
   }
@@ -208,18 +211,18 @@ function evaluate(sample, now, thresholds) {
     if (lidOpen === true) {
       conditions.push({
         key: "lid",
-        severity: "caution",
+        severity: "breach",
         title: "Lid open",
+        band: "Lid open",
         detail: "The reed switch reports that the lid is open.",
-        hint: "The showcase lid is open.",
       });
     } else if (lidOpen === null) {
       conditions.push({
         key: "lid",
-        severity: "caution",
+        severity: "fault",
         title: "Lid state unknown",
+        band: "Lid · state unknown",
         detail: "The reed switch has not reported a state.",
-        hint: "The lid state cannot be checked.",
       });
     }
 
@@ -227,17 +230,17 @@ function evaluate(sample, now, thresholds) {
       conditions.push({
         key: "laser",
         severity: "breach",
-        title: "Laser beam interrupted",
-        detail: "Something is crossing the beam inside the showcase.",
-        hint: "The laser beam is interrupted.",
+        title: "Laser beam tripped",
+        band: "Laser beam tripped · possible tampering",
+        detail: "Something crossed the beam inside the showcase. Possible tampering.",
       });
     } else if (laserInterrupted === null) {
       conditions.push({
         key: "laser",
-        severity: "caution",
+        severity: "fault",
         title: "Laser state unknown",
+        band: "Laser beam · state unknown",
         detail: "The beam sensor has not reported a state.",
-        hint: "The beam cannot be checked.",
       });
     }
   }
@@ -247,8 +250,8 @@ function evaluate(sample, now, thresholds) {
 
 const RESOLVED_TEXT = {
   feed: "Sensor feed restored",
-  lid: "Lid Closed",
-  laser: "Laser beam restored",
+  lid: "Lid closed",
+  laser: "Laser beam clear",
 };
 
 /* Sync the active alert set with the current conditions and log transitions.
@@ -286,12 +289,12 @@ function reconcile(result, now) {
 
     state.alerts.delete(key);
     const label = METRICS[key]?.label;
-    logEvent(now, "resolved", RESOLVED_TEXT[key] ?? `${label} back within range`);
+    logEvent(now, "resolved", RESOLVED_TEXT[key] ?? `${label} back within limits`);
   }
 }
 
 function sortedAlerts() {
-  const rank = (a) => (a.severity === "breach" ? 0 : a.key === "feed" ? 1 : 2);
+  const rank = (a) => (a.severity === "breach" ? 0 : a.key === "feed" ? 1 : a.severity === "caution" ? 2 : 3);
   return [...state.alerts.values()].sort((a, b) => rank(a) - rank(b) || a.since - b.since);
 }
 
@@ -326,243 +329,204 @@ function el(tag, className, text) {
   return node;
 }
 
+const FEED_VIEW = {
+  live: { label: "Live", timeLabel: "Updated" },
+  stale: { label: "Stale", timeLabel: "Last data" },
+  offline: { label: "Disconnected", timeLabel: "Last data" },
+};
+
 function renderFeed(result, now) {
-  const pill = $("#feed-pill");
-  const labels = { live: "Live", stale: "Stale data", offline: "Disconnected" };
-  const icons = { live: "#i-dot", stale: "#i-caution", offline: "#i-offline" };
+  const feed = $("#feed");
+  feed.dataset.feed = result.feed;
+  setText($("#feed-label"), state.sample ? FEED_VIEW[result.feed].label : "No data received");
 
-  pill.dataset.feed = result.feed;
-  setIcon($("use", pill), icons[result.feed]);
-  setText($("#feed-label"), labels[result.feed]);
-
-  const updatedAt = $("#updated-at");
+  $("#feed-time").hidden = !state.sample;
   if (state.sample) {
+    const updatedAt = $("#updated-at");
+    setText($("#feed-time-label"), FEED_VIEW[result.feed].timeLabel);
     setText(updatedAt, fmtTime(state.sample.receivedAt));
     updatedAt.dateTime = new Date(state.sample.receivedAt).toISOString();
-    setText($("#updated-ago"), `· ${fmtAgoPhrase(now - state.sample.receivedAt)}`);
-  } else {
-    setText(updatedAt, "—");
-    setText($("#updated-ago"), "");
+    setText($("#updated-ago"), fmtAgoPhrase(now - state.sample.receivedAt));
   }
 }
 
-function renderSummary(result) {
+/* Alarm band: one block per active alert, coloured by priority. Rebuilt only
+ * when its content changes, so the live region doesn't chatter. */
+function renderAlarms() {
+  const list = $("#alarm-list");
   const alerts = sortedAlerts();
-  const summary = $("#summary");
-  const issues = $("#summary-issues");
 
-  let tone = "ok";
-  if (alerts.length) tone = alerts.some((a) => a.severity === "breach") ? "breach" : "caution";
-  summary.dataset.tone = tone;
-  setIcon($("#summary-icon"), tone === "ok" ? "#i-ok" : SEVERITY_ICON[tone]);
+  const items = alerts.length
+    ? alerts.map((a) => {
+        const meta = a.ackAt != null
+          ? `Ack ${fmtShortTime(a.ackAt)} · still active`
+          : `since ${fmtTime(a.since)}`;
+        return {
+          pri: PRIORITY[a.severity],
+          acked: a.ackAt != null,
+          icon: PRIORITY_ICON[a.severity],
+          text: a.band,
+          meta: a.unconfirmed ? `${meta} · unconfirmed` : meta,
+          detail: a.detail,
+        };
+      })
+    : [{ pri: "none", icon: "#i-ok", text: "No active alarms", meta: "All readings within demo limits", detail: "" }];
 
-  let title;
-  let detail = "";
+  const signature = JSON.stringify(items);
+  if (list.dataset.signature === signature) return;
+  list.dataset.signature = signature;
 
-  if (!alerts.length) {
-    title = "All conditions normal";
-    detail = "Readings within range · Lid Closed · Beam Intact";
-  } else if (alerts.length === 1) {
-    title = alerts[0].title;
-    detail = alerts[0].unconfirmed
-      ? "Last known condition. It cannot be confirmed while the feed is down."
-      : alerts[0].hint;
-  } else {
-    title = `${alerts.length} conditions need attention`;
-  }
-
-  setText($("#summary-title"), title);
-  setText($("#summary-detail"), detail);
-
-  const signature = alerts.length > 1
-    ? alerts.map((a) => `${a.key}:${a.title}:${a.unconfirmed}`).join("|")
-    : "";
-
-  if (issues.dataset.signature !== signature) {
-    issues.dataset.signature = signature;
-    issues.replaceChildren(
-      ...(alerts.length > 1 ? alerts : []).map((a) => {
-        const li = el("li");
-        li.dataset.severity = a.severity;
-        li.append(svgIcon(SEVERITY_ICON[a.severity]), document.createTextNode(a.title));
-        if (a.unconfirmed) li.append(el("span", "issue-note", " (last known)"));
-        return li;
-      }),
-    );
-  }
-
-  /* Lid + laser seals */
-  const live = result.feed === "live";
-
-  renderSeal($("#seal-lid"), live, result.lidOpen, {
-    on: { state: "caution", icon: "#i-lid-open", text: "Lid Open" },
-    off: { state: "ok", icon: "#i-lid-closed", text: "Lid Closed" },
-    lastOn: "Open",
-    lastOff: "Closed",
-  });
-
-  renderSeal($("#seal-laser"), live, result.laserInterrupted, {
-    on: { state: "breach", icon: "#i-beam-broken", text: "Beam Interrupted" },
-    off: { state: "ok", icon: "#i-beam", text: "Beam Intact" },
-    lastOn: "Interrupted",
-    lastOff: "Intact",
-  });
+  list.replaceChildren(
+    ...items.map((item) => {
+      const li = el("li", "alarm");
+      li.dataset.pri = item.pri;
+      li.toggleAttribute("data-acked", Boolean(item.acked));
+      li.append(svgIcon(item.icon), el("span", "t", item.text), el("small", null, item.meta));
+      if (item.detail) li.append(el("span", "visually-hidden", ` ${item.detail}`));
+      return li;
+    }),
+  );
 }
 
-function renderSeal(seal, live, value, variants) {
-  let view;
+function unacknowledgedAlerts() {
+  return sortedAlerts().filter((a) => a.ackAt == null);
+}
 
-  if (live && value !== null) {
-    view = { ...(value ? variants.on : variants.off), sub: "" };
-  } else {
-    const last = value === null ? "" : `Last: ${value ? variants.lastOn : variants.lastOff}`;
-    view = { state: "unknown", icon: "#i-unknown", text: "Unknown", sub: last };
-  }
-
-  seal.dataset.state = view.state;
-  setIcon($("use", seal), view.icon);
-  setText($('[data-field="text"]', seal), view.text);
-
-  let sub = $(".seal-sub", seal);
-  if (view.sub && !sub) {
-    sub = el("span", "seal-sub");
-    $("dd", seal).append(sub);
-  }
-  if (sub) setText(sub, view.sub);
+function renderAckKey() {
+  const count = unacknowledgedAlerts().length;
+  const key = $("#ack-all");
+  /* aria-disabled (not disabled) so focus stays on the key after use. */
+  key.setAttribute("aria-disabled", String(count === 0));
+  setText($("#ack-label"), count ? `Acknowledge (${count})` : "Acknowledge");
 }
 
 const READING_STATUS = {
-  ok: { text: "Within range", icon: "#i-ok" },
-  low: { text: "Below range", icon: "#i-caution" },
-  high: { text: "Above range", icon: "#i-caution" },
-  stale: { text: "Not current", icon: "#i-unknown" },
-  missing: { text: "No reading", icon: "#i-unknown" },
+  ok: () => ({ icon: "#i-ok", text: "Within limits" }),
+  high: (range, alert) => ({ icon: "#i-up", text: `High · above ${range.max} since ${fmtTime(alert.since)}` }),
+  low: (range, alert) => ({ icon: "#i-down", text: `Low · below ${range.min} since ${fmtTime(alert.since)}` }),
+  missing: (range, alert) => ({
+    icon: "#i-unknown",
+    text: alert ? `No valid reading since ${fmtTime(alert.since)}` : state.sample ? "No valid reading" : "Waiting for first sample",
+  }),
+  stale: () => ({ icon: "#i-offline", text: "Last known · not current" }),
 };
 
-function railPercent(value, lo, hi) {
-  return `${(Math.min(Math.max((value - lo) / (hi - lo), 0), 1) * 100).toFixed(2)}%`;
-}
-
-function renderReadings(result, now) {
-  for (const [metric, meta] of Object.entries(METRICS)) {
-    const card = $(`.reading[data-metric="${metric}"]`);
+function renderParams(result) {
+  for (const metric of Object.keys(METRICS)) {
+    const row = $(`.param[data-metric="${metric}"]`);
     const { value, status, range } = result.readings[metric];
-    const view = READING_STATUS[status];
+    const view = READING_STATUS[status](range, state.alerts.get(metric));
 
-    card.dataset.state = status;
-    setIcon($(".reading-status use", card), view.icon);
-    setText($('[data-field="status"]', card), view.text);
-    setText($('[data-field="value"]', card), value == null ? "—" : fmtValue(metric, value));
-    setText($('[data-field="range"]', card), fmtRange(metric, range));
-
-    const lo = Math.min(meta.scale[0], range.min);
-    const hi = Math.max(meta.scale[1], range.max);
-    const rail = $(".rail", card);
-    rail.style.setProperty("--lo", railPercent(range.min, lo, hi));
-    rail.style.setProperty("--hi", railPercent(range.max, lo, hi));
-    if (value != null) rail.style.setProperty("--pos", railPercent(value, lo, hi));
-
-    let note = "";
-    if (status === "stale" && state.sample) {
-      note = `Last known value · ${fmtAgoPhrase(now - state.sample.receivedAt)}`;
-    } else if (status === "missing") {
-      note = state.sample ? "The sensor did not return a valid reading." : "Waiting for the first sample.";
-    }
-    setText($('[data-field="note"]', card), note);
+    row.dataset.state = status;
+    setText($('[data-field="value"]', row), value == null ? "-?-" : fmtValue(metric, value));
+    setText($('[data-field="max"]', row), String(range.max));
+    setText($('[data-field="min"]', row), String(range.min));
+    setIcon($(".status use", row), view.icon);
+    setText($('[data-field="status"]', row), view.text);
   }
 }
 
-const alertNodes = new Map();
+/* 6-hour trend per reading, drawn in a stretched 1000×100 viewBox so it fills
+ * the row at any width; labels are HTML so they don't stretch. */
+function drawTrace(plot, metric, points, range, status) {
+  const values = points.filter((p) => p.v != null).map((p) => p.v);
+  let lo = Math.min(range.min, ...values);
+  let hi = Math.max(range.max, ...values);
+  const pad = (hi - lo) * 0.15 || 1;
+  lo = metric === "temperature" ? lo - pad : Math.max(0, lo - pad);
+  hi += pad;
 
-function buildAlertNode(key) {
-  const li = el("li", "alert");
-  li.tabIndex = -1;
-  li.dataset.key = key;
+  const x = (i) => (i / (points.length - 1)) * 1000;
+  const y = (v) => ((hi - v) / (hi - lo)) * 100;
 
-  const icon = svgIcon("#i-caution");
-  const body = el("div", "alert-body");
-  const title = el("p", "alert-title");
-  const detail = el("p", "alert-detail");
-  const meta = el("p", "alert-meta");
-  const time = el("time");
-  const ago = el("span");
-  const unconfirmed = el("span");
-  meta.append("Since ", time, " · ", ago, unconfirmed);
-  body.append(title, detail, meta);
+  const root = svg("svg", { viewBox: "0 0 1000 100", preserveAspectRatio: "none" });
+  const lastValid = points.findLastIndex((p) => p.v != null);
+  if (lastValid >= 0 && lastValid < points.length - 1) {
+    root.append(svg("rect", { class: "trace-gap", x: x(lastValid), y: 0, width: 1000 - x(lastValid), height: 100 }));
+  }
 
-  const actions = el("div", "alert-actions");
-  li.append(icon, body, actions);
+  const tags = [];
+  for (const limit of [range.max, range.min]) {
+    if (limit <= lo) continue;
+    root.append(svg("line", { class: "trace-limit", x1: 0, x2: 1000, y1: y(limit), y2: y(limit), "vector-effect": "non-scaling-stroke" }));
+    const tag = el("span", "trace-tag", String(limit));
+    tag.style.top = `${y(limit)}%`;
+    tags.push(tag);
+  }
 
-  return li;
+  let d = "";
+  let pen = false;
+  points.forEach((p, i) => {
+    if (p.v == null) {
+      pen = false;
+      return;
+    }
+    d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(2)}`;
+    pen = true;
+  });
+  root.append(svg("path", { class: "trace-line", d, "vector-effect": "non-scaling-stroke" }));
+
+  if (status === "missing" && lastValid >= 0) {
+    const label = el("span", "trace-nosignal", "No signal");
+    label.style.left = `${(x(lastValid) + 1000) / 20}%`;
+    tags.push(label);
+  }
+
+  plot.replaceChildren(root, ...tags);
 }
 
-function renderAlertActions(li, alert) {
-  const actions = $(".alert-actions", li);
-  const acked = alert.ackAt != null;
+let tracedKey = "";
 
-  if (li.dataset.acked === String(acked)) return;
-  li.dataset.acked = String(acked);
+function renderTraces(result) {
+  const key = `${state.sample?.receivedAt}|${result.feed}|${JSON.stringify(state.thresholds)}`;
+  if (key === tracedKey) return;
+  tracedKey = key;
 
-  if (acked) {
-    /* Acknowledging only records that someone has seen it; the alert stays
-     * listed until the condition itself clears. */
-    const note = el("p", "alert-ack-note");
-    note.append(
-      svgIcon("#i-ack"),
-      `Acknowledged at ${fmtShortTime(alert.ackAt)} · condition still active`,
-    );
-    actions.replaceChildren();
-    $(".alert-body", li).append(note);
-  } else {
-    const button = el("button", "btn", "Acknowledge");
-    button.type = "button";
-    button.dataset.ack = alert.key;
-    button.setAttribute("aria-label", `Acknowledge: ${alert.title}`);
-    actions.replaceChildren(button);
+  for (const metric of Object.keys(METRICS)) {
+    const { status, range } = result.readings[metric];
+    const points = source.history(metric);
+    if (status === "missing") points.at(-1).v = null;
+    drawTrace($(`.param[data-metric="${metric}"] .trace-plot`), metric, points, range, status);
   }
 }
 
-function renderAlerts(now) {
-  const list = $("#alert-list");
-  const alerts = sortedAlerts();
-  const keys = new Set(alerts.map((a) => a.key));
+function renderSecurity(result) {
+  const live = result.feed === "live";
 
-  for (const [key, node] of alertNodes) {
-    if (!keys.has(key)) {
-      node.remove();
-      alertNodes.delete(key);
-    }
-  }
-
-  alerts.forEach((alert, index) => {
-    let li = alertNodes.get(alert.key);
-    if (!li) {
-      li = buildAlertNode(alert.key);
-      alertNodes.set(alert.key, li);
-    }
-
-    li.dataset.severity = alert.severity;
-    setIcon($("use", li), SEVERITY_ICON[alert.severity]);
-    setText($(".alert-title", li), alert.title);
-    setText($(".alert-detail", li), alert.detail);
-
-    const [time, ago, unconfirmed] = $(".alert-meta", li).querySelectorAll("time, span");
-    setText(time, fmtTime(alert.since));
-    time.dateTime = new Date(alert.since).toISOString();
-    setText(ago, fmtAgoPhrase(now - alert.since));
-    setText(unconfirmed, alert.unconfirmed ? " · Unconfirmed while feed is down" : "");
-
-    renderAlertActions(li, alert);
-
-    if (list.children[index] !== li) {
-      list.insertBefore(li, list.children[index] ?? null);
-    }
+  renderSeal($("#seal-lid"), live, result.lidOpen, {
+    on: { state: "breach", icon: "#i-lid-open", text: "Open", sub: "Reed switch" },
+    off: { state: "secure", icon: "#i-lid-closed", text: "Closed", sub: "Reed switch" },
+    lastOn: "open",
+    lastOff: "closed",
   });
 
-  const count = $("#alert-count");
-  setText(count, String(alerts.length));
-  count.toggleAttribute("data-active", alerts.length > 0);
-  $("#alert-empty").hidden = alerts.length > 0;
+  const tripped = state.alerts.get("laser");
+  renderSeal($("#seal-laser"), live, result.laserInterrupted, {
+    on: {
+      state: "breach",
+      icon: "#i-beam-broken",
+      text: "Tripped",
+      sub: tripped ? `Since ${fmtTime(tripped.since)} · possible tampering` : "Possible tampering",
+    },
+    off: { state: "secure", icon: "#i-beam", text: "No tampering", sub: "Beam intact" },
+    lastOn: "tripped",
+    lastOff: "no tampering",
+  });
+}
+
+function renderSeal(sec, live, value, variants) {
+  let view;
+  if (live && value !== null) {
+    view = value ? variants.on : variants.off;
+  } else {
+    const sub = value === null ? "" : `Last known: ${value ? variants.lastOn : variants.lastOff}`;
+    view = { state: "unknown", icon: "#i-unknown", text: "Unknown", sub };
+  }
+
+  sec.dataset.state = view.state;
+  setIcon($(".sec-state use", sec), view.icon);
+  setText($('[data-field="text"]', sec), view.text);
+  setText($('[data-field="sub"]', sec), view.sub);
 }
 
 let renderedEventsVersion = -1;
@@ -571,14 +535,12 @@ function renderEvents() {
   if (renderedEventsVersion === state.eventsVersion) return;
   renderedEventsVersion = state.eventsVersion;
 
-  const list = $("#event-list");
-  list.replaceChildren(
+  $("#event-list").replaceChildren(
     ...state.events.slice(0, VISIBLE_EVENTS).map((event) => {
       const li = el("li", "event");
-      li.dataset.kind = event.kind;
       const time = el("time", "num", fmtTime(event.at));
       time.dateTime = new Date(event.at).toISOString();
-      li.append(time, svgIcon(EVENT_ICON[event.kind]), el("span", "event-text", event.text));
+      li.append(time, el("span", "event-text", event.text));
       return li;
     }),
   );
@@ -590,9 +552,11 @@ function update() {
 
   reconcile(result, now);
   renderFeed(result, now);
-  renderSummary(result);
-  renderReadings(result, now);
-  renderAlerts(now);
+  renderAlarms();
+  renderAckKey();
+  renderParams(result);
+  renderTraces(result);
+  renderSecurity(result);
   renderEvents();
 }
 
@@ -712,7 +676,7 @@ function drawChart(plot, metric, points, range) {
   const root = svg("svg", {
     viewBox: `0 0 ${width} ${height}`,
     role: "img",
-    "aria-label": `${meta.label} over the last 6 hours. Range ${fmtRange(metric, range)}. Table view below.`,
+    "aria-label": `${meta.label} over the last 6 hours. Limits ${fmtRange(metric, range)}. Table view below.`,
   });
 
   root.append(
@@ -838,7 +802,7 @@ function renderHistory() {
     const title = el("span", "chart-title", meta.label);
     title.append(el("span", "unit", meta.unit));
     const legend = el("span", "chart-legend");
-    legend.append(el("span", "chart-legend-band"), `Range ${fmtRange(metric, state.thresholds[metric])} (demo)`);
+    legend.append(el("span", "chart-legend-band"), `Limits ${fmtRange(metric, state.thresholds[metric])} (demo)`);
     head.append(title, legend);
 
     figure.append(head, el("div", "chart-plot"));
@@ -926,15 +890,15 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  const ack = event.target.closest("[data-ack]");
-  if (ack) {
-    const alert = state.alerts.get(ack.dataset.ack);
-    if (alert && alert.ackAt == null) {
-      alert.ackAt = Date.now();
-      logEvent(alert.ackAt, "ack", `Acknowledged: ${alert.title}`);
-      update();
-      alertNodes.get(alert.key)?.focus();
+  /* Acknowledge records that someone has seen the alarms; each one stays in
+   * the band until live data shows its condition has ended. */
+  if (event.target.closest("#ack-all")) {
+    const now = Date.now();
+    for (const alert of unacknowledgedAlerts()) {
+      alert.ackAt = now;
+      logEvent(now, "ack", `Acknowledged: ${alert.title}`);
     }
+    update();
   }
 });
 
