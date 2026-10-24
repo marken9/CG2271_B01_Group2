@@ -1,4 +1,5 @@
 import { createDemoSource, DEMO_SCENARIOS } from "./demo-source.js";
+import { createLiveSource } from "./live-source.js";
 
 /* ============================================================
  * Configuration
@@ -126,10 +127,30 @@ const state = {
 };
 
 function logEvent(at, kind, text) {
-  state.events.unshift({ at, kind, text });
+  addEvents([{ at, kind, text }]);
+}
+
+function addEvents(events) {
+  state.events.push(...events);
   state.events.sort((a, b) => b.at - a.at);
   state.events.length = Math.min(state.events.length, MAX_EVENTS);
   state.eventsVersion++;
+}
+
+/* Lid and laser events from the live server (kept there so they survive a
+ * reload). A snapshot replaces the earlier server events. */
+function applyServerEvents(events, replace) {
+  if (replace) state.events = state.events.filter((event) => !event.server);
+  addEvents(events.map((event) => ({ ...event, server: true })));
+}
+
+/* With the live source the server logs lid and laser changes, so the page
+ * doesn't log them a second time. Unknown-state faults are still the page's. */
+const SERVER_LOGGED = new Set(["lid", "laser"]);
+let serverLogsSecurity = false;
+
+function pageLogs(key, severity) {
+  return !(serverLogsSecurity && SERVER_LOGGED.has(key) && severity !== "fault");
 }
 
 /* ============================================================
@@ -215,6 +236,7 @@ function evaluate(sample, now, thresholds) {
         title: "Lid open",
         band: "Lid open",
         detail: "The reed switch reports that the lid is open.",
+        since: sample.lidOpenSince,
       });
     } else if (lidOpen === null) {
       conditions.push({
@@ -233,6 +255,7 @@ function evaluate(sample, now, thresholds) {
         title: "Laser beam tripped",
         band: "Laser beam tripped · possible tampering",
         detail: "Something crossed the beam inside the showcase. Possible tampering.",
+        since: sample.laserSince,
       });
     } else if (laserInterrupted === null) {
       conditions.push({
@@ -267,11 +290,11 @@ function reconcile(result, now) {
     if (!existing) {
       const since = condition.since ?? now;
       state.alerts.set(condition.key, { ...condition, since, ackAt: null, unconfirmed: false });
-      logEvent(since, condition.severity, condition.title);
+      if (pageLogs(condition.key, condition.severity)) logEvent(since, condition.severity, condition.title);
       continue;
     }
 
-    if (existing.title !== condition.title) {
+    if (existing.title !== condition.title && pageLogs(condition.key, condition.severity)) {
       logEvent(now, condition.severity, condition.title);
     }
 
@@ -288,6 +311,7 @@ function reconcile(result, now) {
     }
 
     state.alerts.delete(key);
+    if (!pageLogs(key, "resolved")) continue;
     const label = METRICS[key]?.label;
     logEvent(now, "resolved", RESOLVED_TEXT[key] ?? `${label} back within limits`);
   }
@@ -478,7 +502,7 @@ function drawTrace(plot, metric, points, range, status) {
 let tracedKey = "";
 
 function renderTraces(result) {
-  const key = `${state.sample?.receivedAt}|${result.feed}|${JSON.stringify(state.thresholds)}`;
+  const key = `${state.sample?.receivedAt}|${result.feed}|${source.historyStamp}|${JSON.stringify(state.thresholds)}`;
   if (key === tracedKey) return;
   tracedKey = key;
 
@@ -909,37 +933,53 @@ for (const dialog of document.querySelectorAll("dialog")) {
   });
 }
 
-/* Demo state picker (also settable with ?demo=<state>) */
-const demoSelect = $("#demo-state");
+/* Data picker: the live feed by default, or a demo state with ?demo=<state>. */
+const dataSelect = $("#data-source");
 const params = new URLSearchParams(location.search);
-const initialScenario = DEMO_SCENARIOS[params.get("demo")] ? params.get("demo") : "normal";
+const demoParam = params.get("demo");
+const initialScenario = demoParam === null ? null : DEMO_SCENARIOS[demoParam] ? demoParam : "normal";
+const isLive = initialScenario === null;
 
+const liveOption = el("option", null, "Live feed");
+liveOption.value = "live";
+const demoGroup = el("optgroup");
+demoGroup.label = "Demo";
 for (const [value, { label }] of Object.entries(DEMO_SCENARIOS)) {
   const option = el("option", null, label);
   option.value = value;
-  demoSelect.append(option);
+  demoGroup.append(option);
 }
-demoSelect.value = initialScenario;
+dataSelect.append(liveOption, demoGroup);
+dataSelect.value = initialScenario ?? "live";
+setText($("#source-name"), isLive ? "Live data." : "Demo data.");
 
-demoSelect.addEventListener("change", () => {
+dataSelect.addEventListener("change", () => {
   const url = new URL(location.href);
-  if (demoSelect.value === "normal") url.searchParams.delete("demo");
-  else url.searchParams.set("demo", demoSelect.value);
+  if (dataSelect.value === "live") url.searchParams.delete("demo");
+  else url.searchParams.set("demo", dataSelect.value);
+
+  /* Switching between live and demo starts over with a fresh page. */
+  if ((dataSelect.value === "live") !== isLive) {
+    location.assign(url);
+    return;
+  }
   history.replaceState(null, "", url);
-  source.setScenario(demoSelect.value);
+  source.setScenario(dataSelect.value);
 });
 
-/* Replace this with a live source (polling or streaming from server.js)
- * once the board is connected. It only needs to call onSample(sample). */
-const source = createDemoSource({
-  scenario: initialScenario,
-  onSample(sample) {
-    state.sample = sample;
-    update();
-  },
-});
+function onSample(sample) {
+  state.sample = sample;
+  update();
+}
 
-for (const event of source.seedEvents()) logEvent(event.at, event.kind, event.text);
+const source = isLive
+  ? createLiveSource({ onSample, onEvents: applyServerEvents })
+  : createDemoSource({ scenario: initialScenario, onSample });
+
+serverLogsSecurity = isLive;
+if (!isLive) {
+  for (const event of source.seedEvents()) logEvent(event.at, event.kind, event.text);
+}
 source.start();
 setInterval(update, 1000);
 openDialogFromHash();
