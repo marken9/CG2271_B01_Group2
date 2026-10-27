@@ -150,6 +150,12 @@ typedef struct {
     uint16_t lightRaw;
     uint8_t lightPercent;
     bool lightValid;
+    uint32_t lightSamples;
+    uint32_t lightReadErrors;
+    uint8_t lightReference;
+    uint8_t lightPinMux;
+    uint8_t lightPullEnabled;
+    uint8_t lightSelectedChannel;
 
     int16_t temperatureX10;
     uint16_t humidityX10;
@@ -348,15 +354,15 @@ static bool ADC_Init(void) {
 
     CLOCK_EnableClock(kCLOCK_PortB);
 
-    /* Put PTB0 into analog mode. */
-    PORT_SetPinMux(
-        LIGHT_PORT,
-        LIGHT_PIN,
-        kPORT_PinDisabledOrAnalog
-    );
-
+    /* Configure all three ADC pins identically. Clear pull/interrupt settings
+     * as well as MUX; PORT_SetPinMux alone preserves those other PCR bits.
+     * This makes initialization deterministic, not a proven fix for a zero
+     * sensor output. Keep the shared reference used by the working joystick.
+     */
+    LIGHT_PORT->PCR[LIGHT_PIN] = PORT_PCR_MUX(0U);
     PORTB->PCR[JOY_X_PIN] = PORT_PCR_MUX(0U);
     PORTB->PCR[JOY_Y_PIN] = PORT_PCR_MUX(0U);
+    GPIOB->PDDR &= ~((1UL << LIGHT_PIN) | (1UL << JOY_X_PIN) | (1UL << JOY_Y_PIN));
 
     ADC16_GetDefaultConfig(&adcConfig);
 
@@ -699,6 +705,16 @@ static void ADCTask(void *params) {
             sensorData.lightValid = lightValid;
             sensorData.lightRaw = raw;
             sensorData.lightPercent = (uint8_t)(((uint32_t)raw * 100U) / ADC_MAX_VALUE);
+            /* Capture ADC registers here, while this task still owns the
+             * light conversion. MonitorTask must not sample SC1 later, when
+             * it may already refer to one of the joystick channels.
+             */
+            if (lightValid) sensorData.lightSamples++;
+            else sensorData.lightReadErrors++;
+            sensorData.lightReference = (uint8_t)((ADC0->SC2 & ADC_SC2_REFSEL_MASK) >> ADC_SC2_REFSEL_SHIFT);
+            sensorData.lightSelectedChannel = (uint8_t)((ADC0->SC1[0] & ADC_SC1_ADCH_MASK) >> ADC_SC1_ADCH_SHIFT);
+            sensorData.lightPinMux = (uint8_t)((PORTB->PCR[LIGHT_PIN] & PORT_PCR_MUX_MASK) >> PORT_PCR_MUX_SHIFT);
+            sensorData.lightPullEnabled = (PORTB->PCR[LIGHT_PIN] & PORT_PCR_PE_MASK) != 0U;
             xSemaphoreGive(dataMutex);
         }
 #endif
@@ -866,8 +882,12 @@ static void MonitorTask(void *params) {
                 (unsigned int)snapshot.lightPercent
             );
         } else {
-            PRINTF("Light: WAITING\r\n");
+            PRINTF("Light: NO VALID CONVERSION\r\n");
         }
+        PRINTF("Light ADC audit: samples=%lu errors=%lu REFSEL=%u CH=%u MUX=%u PULL=%u\r\n",
+               (unsigned long)snapshot.lightSamples, (unsigned long)snapshot.lightReadErrors,
+               (unsigned)snapshot.lightReference, (unsigned)snapshot.lightSelectedChannel,
+               (unsigned)snapshot.lightPinMux, (unsigned)snapshot.lightPullEnabled);
 
 #else
         PRINTF("Light sensor: PAUSED\r\n");
@@ -920,6 +940,7 @@ int main(void) {
 #endif
 
     PRINTF("\r\nRelicGuard Door Alarm + Joystick Starting...\r\n");
+    PRINTF("ADC audit 2026-10-27: light A0/PTB0, channel 8; shared REFSEL=1.\r\n");
     PRINTF("Return to centre between directions; press the stick to submit.\r\n");
 
     /* Create synchronization objects. */
