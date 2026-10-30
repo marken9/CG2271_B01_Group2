@@ -42,6 +42,7 @@
 #include "queue.h"
 #include "joystick_password.h"
 #include "alarm.h"
+#include "rg_mcx_uart.h"
 
 /* ============================================================
  * 1. CONFIGURATION
@@ -173,6 +174,14 @@ typedef struct {
 } SensorData_t;
 
 static SensorData_t sensorData = {0};
+
+/* Person 4: consume these limits in the environmental controller.
+ * No limits are silently assumed until a validated L command arrives.
+ * Only ControlTask writes them; protect future cross-task readers.
+ */
+RG_Limits g_rgLimits = {0};
+bool g_rgLimitsConfigured = false;
+uint32_t g_rgMotionEventCount = 0; /* Only ControlTask writes. */
 
 static SemaphoreHandle_t inputSemaphore = NULL;
 static SemaphoreHandle_t dataMutex = NULL;
@@ -731,6 +740,7 @@ static void ControlTask(void *params) {
     TickType_t lastInput = 0U, acceptedAt = 0U;
     bool granted = false;
     bool doorValid = false, doorOpen = false;
+    TickType_t lastPublish = 0;
     Alarm alarm = {0};
     for (;;) {
         InputEvent event;
@@ -744,6 +754,40 @@ static void ControlTask(void *params) {
         if (granted && (TickType_t)(now - acceptedAt) >= pdMS_TO_TICKS(ACCESS_WINDOW_MS)) {
             granted = false;
             status = ENTRY_ACCESS_ENDED;
+        }
+        /* UART requests are applied HERE, by the existing state owner.
+         * ACK is sent only after this task has processed the request.
+         */
+        RG_Frame request;
+        if (RG_MCX_TakeRequest(&request)) {
+            uint8_t result = RG_OK;
+            RG_ESP_State esp;
+            RG_MCX_GetESP(&esp);
+            if (!esp.online || esp.session != request.session) {
+                result = RG_BUSY;
+            } else if (request.type == 'R') {
+                granted = true;
+                acceptedAt = now;
+                status = ENTRY_ACCEPTED;
+                Password_Reset(&entry);
+            } else if (request.type == 'L') {
+                if (RG_LimitsParse(request.payload, &g_rgLimits)) {
+                    g_rgLimitsConfigured = true;
+                } else {
+                    result = RG_BAD_PAYLOAD;
+                }
+            } else if (request.type == 'M') {
+                g_rgMotionEventCount++;
+                /* PERSON 1 INTEGRATION POINT:
+                 * A qualifying motion event was received exactly once in
+                 * this boot/session. Latch a security alarm here when !granted.
+                 * Continue using esp.motionValid/moving for current stability.
+                 * The existing door-only alarm below is intentionally intact.
+                 */
+            } else {
+                result = RG_UNSUPPORTED;
+            }
+            RG_MCX_Reply(&request, result);
         }
         if (received) {
             if (event.type == EVENT_DOOR_CHANGED) {
@@ -777,7 +821,24 @@ static void ControlTask(void *params) {
         sensorData.entryLength = entry.length;
         sensorData.entryStatus = status;
         sensorData.accessGranted = granted;
+        RG_MCX_Status wire = {0};
+        wire.doorValid = doorValid;
+        wire.doorOpen = doorOpen;
+        wire.accessGranted = granted;
+        wire.accessRemainingMs = granted ? ACCESS_WINDOW_MS -
+            (uint32_t)(now - acceptedAt) * portTICK_PERIOD_MS : 0U;
+        wire.alarm = (uint8_t)alarm.state;
+        wire.lightValid = sensorData.lightValid;
+        wire.lightRaw = sensorData.lightRaw;
+        wire.lightPercent = sensorData.lightPercent;
+        /* PERSON 4: set warningValid/mask and exposureValid/exposure here
+         * after implementing the environmental controller. Zero-initialized
+         * validity flags mean unavailable, NOT conditions normal. */
         xSemaphoreGive(dataMutex);
+        if ((TickType_t)(now-lastPublish) >= pdMS_TO_TICKS(500U)) {
+            RG_MCX_Publish(&wire);
+            lastPublish = now;
+        }
     }
 }
 
@@ -917,6 +978,19 @@ static void MonitorTask(void *params) {
         }
 
 #endif
+        RG_ESP_State esp;
+        RG_MCX_GetESP(&esp);
+        PRINTF("ESP link: %s | climate: %s | motion: %s\r\n",
+               esp.online ? "ONLINE" : "OFFLINE",
+               esp.climateValid ? "VALID" : "UNAVAILABLE",
+               esp.motionValid ? (esp.moving ? "MOVING" : "STATIONARY") : "UNAVAILABLE");
+        if (esp.climateValid) {
+            PRINTF("ESP temperature x10: %d | humidity x10: %u\r\n",
+                   (int)esp.temperatureX10, (unsigned)esp.humidityX10);
+        }
+        PRINTF("UART frames=%lu CRC/parse=%lu hardware=%lu txErrors=%lu\r\n",
+               (unsigned long)esp.rxFrames, (unsigned long)esp.parseErrors,
+               (unsigned long)esp.hardwareErrors, (unsigned long)esp.txErrors);
         PRINTF("================================\r\n");
 
         vTaskDelayUntil(
@@ -973,8 +1047,14 @@ int main(void) {
     DHT_Init();
 #endif
 
+    if (!RG_MCX_Init()) {
+        PRINTF("ERROR: UART initialization/allocation failed\r\n");
+        for (;;) {}
+    }
+
     /* Compare each result explicitly: bitwise &= can hide allocation failures. */
-    if (xTaskCreate(InputTask, "Input", INPUT_STACK_SIZE, NULL, INPUT_TASK_PRIORITY, NULL) != pdPASS ||
+    if (xTaskCreate(RG_MCX_Task, "UART", 512U, NULL, 2U, NULL) != pdPASS ||
+        xTaskCreate(InputTask, "Input", INPUT_STACK_SIZE, NULL, INPUT_TASK_PRIORITY, NULL) != pdPASS ||
         xTaskCreate(ADCTask, "ADC", ADC_STACK_SIZE, NULL, ADC_TASK_PRIORITY, NULL) != pdPASS ||
         xTaskCreate(ControlTask, "Control", CONTROL_STACK_SIZE, NULL, CONTROL_TASK_PRIORITY, NULL) != pdPASS ||
         xTaskCreate(MonitorTask, "Monitor", MONITOR_STACK_SIZE, NULL, MONITOR_TASK_PRIORITY, NULL) != pdPASS
