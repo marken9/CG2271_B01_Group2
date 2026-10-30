@@ -1,0 +1,33 @@
+Protocol-v1 example frames. Each line ends in a real newline.
+The last L example is illustrative, not an adopted environmental policy.
+Send a heartbeat from the same session before its data/commands.
+
+MCX heartbeat
+@RG1,4D435831,00000001,H,08:000003E8*071A
+
+ESP heartbeat
+@RG1,45535031,00000001,H,08:000003E8*08FD
+
+Climate 26.5 C, 60.0 %RH
+@RG1,45535031,00000002,C,09:1,265,600*D25A
+
+Climate unavailable
+@RG1,45535031,00000003,C,05:0,0,0*B862
+
+Stationary and valid
+@RG1,45535031,00000004,V,03:1,0*A296
+
+Qualifying movement event
+@RG1,45535031,00000005,M,03:1,1*36E9
+
+Request 30-second access
+@RG1,45535031,00000006,R,02:30*A702
+
+ACK to that access request
+@RG1,4D435831,00000006,A,0A:45535031,0*2425
+
+Confirmed closed, no access; environment unavailable
+@RG1,4D435831,00000007,S,17:1,0,0,0,1,0,0,0,0,0,0,0*1D60
+
+Illustrative limits ONLY; group must approve actual values
+@RG1,45535031,00000008,L,19:180,300,300,650,80,100000*9210
