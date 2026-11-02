@@ -111,3 +111,22 @@ gcc -std=c11 -Wall -Wextra -Werror -I MCXC/CG3201FinalProject_B01_Group2/source 
 
 On hardware, the MCX serial console prints the active limits, the decoded
 warning mask, beep requests and accumulated exposure once per second.
+
+## OLED display (ESP32)
+
+`RelicGuard_ESP32_UART/rg_oled.cpp` draws a 128 x 64 SSD1306 on the shared I2C
+bus (SDA GPIO8, SCL GPIO9, VCC 3V3, GND G). It only displays what the MCX has
+confirmed, plus the local DHT11 reading; it never decides alarms or warnings.
+Libraries: "Adafruit SSD1306" and "Adafruit GFX Library".
+
+| Screen line | Source |
+|---|---|
+| Status: ARMED / ACCESS GRANTED 23s / !! SECURITY ALARM !! / MCX LINK LOST | MCX confirmed state (`RG_ESP_GetConfirmed`) |
+| Lid: OPEN / CLOSED / -- | MCX confirmed state |
+| Temp / Hum (or `--`) | Local DHT11 store (`RG_DHT_GetReading`, stale after 15 s) |
+| Light % and Exp (percent-seconds) | MCX confirmed state |
+| Env: OK, warning names, or UNAVAILABLE | `warningMask` bits above |
+
+It redraws every 500 ms, drawing into RAM first and holding the I2C mutex only
+while sending the frame. `tests/oled_check/oled_check.ino` is a standalone
+wiring check: it scans the bus and writes "OLED OK" on the screen.

@@ -2,6 +2,7 @@
 #include "rg_esp_uart.h"
 #include "rg_dht.h"
 #include "rg_mpu.h"
+#include "rg_oled.h"
 
 // ============================================================
 // CONFIGURATION
@@ -51,6 +52,9 @@ void setup()
     // #define RG_MPU_ENABLED 0
     RG_MPU_Begin();
 
+    // Person 4: OLED display on the shared I2C bus (GPIO8/9)
+    RG_OLED_Begin();
+
     // Serial Monitor commands
     Serial.println("\nTest controls:");
     Serial.println("  a = Request 30s authorized access");
@@ -82,6 +86,9 @@ void loop()
     // MPU6050: Reads every 100 ms when enabled
     // Currently disabled; returns immediately
     RG_MPU_Update();
+
+    // Person 4: redraw the OLED (every 500 ms)
+    RG_OLED_Update();
 
     // ========================================================
     // 2. PROCESS UART COMMAND RESULTS
