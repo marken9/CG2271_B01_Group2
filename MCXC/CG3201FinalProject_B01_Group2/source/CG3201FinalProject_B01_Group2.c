@@ -43,6 +43,7 @@
 #include "joystick_password.h"
 #include "alarm.h"
 #include "rg_mcx_uart.h"
+#include "env_warning.h"
 
 /* ============================================================
  * 1. CONFIGURATION
@@ -56,6 +57,8 @@
 #define REED_PIN            12U     // PTA12 - J1 Pin 8
 
 // Photoresistor (KY-018) - A0 / J4 Pin 2
+// NOTE: our module's power labels are wrong. Wire "-" pin -> 3.3 V (J3 pin 8)
+// and the middle pin -> GND (J3 pin 12). Wired as labelled, S reads 0 V.
 #define LIGHT_PORT          PORTB
 #define LIGHT_PIN           0U      // PTB0 - J4 Pin 2
 
@@ -91,6 +94,15 @@
 #define REED_DEBOUNCE_MS    25U
 
 #define LIGHT_SAMPLE_MS     100U
+
+/* Person 4: two-point light calibration (relative brightness, not lux).
+ * Read "Light raw (filtered)" on the serial console with the sensor fully
+ * covered (DARK) and with a phone torch about 5 cm away (BRIGHT), then put
+ * those two numbers here. Either order works: some modules read LOWER when
+ * brighter. Until calibrated, brightness equals the raw ADC percentage.
+ */
+#define LIGHT_DARK_RAW      0U
+#define LIGHT_BRIGHT_RAW    4095U
 #define DHT_SAMPLE_MS       2000U
 #define PRINT_SAMPLE_MS     1000U
 
@@ -149,7 +161,8 @@ typedef struct {
     bool doorValid;
 
     uint16_t lightRaw;
-    uint8_t lightPercent;
+    uint16_t lightFiltered;
+    uint8_t lightPercent;   /* Relative brightness after calibration. */
     bool lightValid;
     uint32_t lightSamples;
     uint32_t lightReadErrors;
@@ -171,6 +184,14 @@ typedef struct {
     EntryStatus entryStatus;
     bool accessGranted;
     AlarmState alarmState;
+
+    /* Person 4: environmental controller results (written by ControlTask). */
+    uint8_t envMask;
+    uint32_t exposure;
+    bool exposureValid;
+    bool envLimitsFromWeb;
+    EnvLimits envLimits;
+    uint32_t envBeepRequests;
 } SensorData_t;
 
 static SensorData_t sensorData = {0};
@@ -665,6 +686,7 @@ static void ADCTask(void *params) {
     bool previouslyValid = false;
 #if ENABLE_LIGHT_SENSOR
     unsigned lightDivider = 0U;
+    LightFilter lightFilter = {0};
 #endif
     for (;;) {
         uint16_t x = 0U, y = 0U;
@@ -710,10 +732,14 @@ static void ADCTask(void *params) {
             lightDivider = 0U;
             uint16_t raw = 0U;
             bool lightValid = ADC_Read(LIGHT_ADC_CHANNEL, &raw);
+            /* Person 4: smooth, then map to relative brightness (0-100 %). */
+            uint16_t filtered = lightValid ? LightFilter_Update(&lightFilter, raw) : 0U;
             xSemaphoreTake(dataMutex, portMAX_DELAY);
             sensorData.lightValid = lightValid;
             sensorData.lightRaw = raw;
-            sensorData.lightPercent = (uint8_t)(((uint32_t)raw * 100U) / ADC_MAX_VALUE);
+            sensorData.lightFiltered = filtered;
+            sensorData.lightPercent = lightValid
+                ? Light_ToBrightness(filtered, LIGHT_DARK_RAW, LIGHT_BRIGHT_RAW) : 0U;
             /* Capture ADC registers here, while this task still owns the
              * light conversion. MonitorTask must not sample SC1 later, when
              * it may already refer to one of the joystick channels.
@@ -742,6 +768,9 @@ static void ControlTask(void *params) {
     bool doorValid = false, doorOpen = false;
     TickType_t lastPublish = 0;
     Alarm alarm = {0};
+    EnvWarning env;
+    EnvWarning_Init(&env);
+    uint32_t envBeepRequests = 0U;
     for (;;) {
         InputEvent event;
         bool received = xQueueReceive(inputQueue, &event, pdMS_TO_TICKS(50U)) == pdTRUE;
@@ -814,6 +843,24 @@ static void ControlTask(void *params) {
         uint8_t colors = Alarm_Update(&alarm, doorValid, doorOpen, granted,
                                       (uint32_t)now, (uint32_t)pdMS_TO_TICKS(ALARM_BLINK_HALF_MS));
         RGB_Write(colors);
+
+        /* Person 4: read ESP climate BEFORE taking dataMutex, so this task
+         * never holds two mutexes at once. RG_MCX_GetESP already marks
+         * climate invalid when the link is down or the reading is >15 s old.
+         */
+        RG_ESP_State envEsp;
+        RG_MCX_GetESP(&envEsp);
+        EnvLimits envLimits;
+        if (g_rgLimitsConfigured) {
+            envLimits = (EnvLimits){
+                g_rgLimits.tempLowX10, g_rgLimits.tempHighX10,
+                g_rgLimits.humidityLowX10, g_rgLimits.humidityHighX10,
+                g_rgLimits.lightHighPercent, g_rgLimits.exposureLimit
+            };
+        } else {
+            EnvWarning_DefaultLimits(&envLimits);
+        }
+
         xSemaphoreTake(dataMutex, portMAX_DELAY);
         sensorData.doorValid = doorValid;
         sensorData.doorOpen = doorOpen;
@@ -831,9 +878,36 @@ static void ControlTask(void *params) {
         wire.lightValid = sensorData.lightValid;
         wire.lightRaw = sensorData.lightRaw;
         wire.lightPercent = sensorData.lightPercent;
-        /* PERSON 4: set warningValid/mask and exposureValid/exposure here
-         * after implementing the environmental controller. Zero-initialized
-         * validity flags mean unavailable, NOT conditions normal. */
+        /* Person 4: environmental controller. Warnings need 10 s outside a
+         * limit, clear with hysteresis, and flag stale inputs as unavailable
+         * (mask bits 6-7) rather than normal. See env_warning.h for the bits.
+         */
+        EnvInputs envIn = {
+            .climateValid = envEsp.climateValid,
+            .temperatureX10 = envEsp.temperatureX10,
+            .humidityX10 = envEsp.humidityX10,
+            .lightValid = sensorData.lightValid,
+            .brightnessPercent = sensorData.lightPercent
+        };
+        uint8_t envMask = EnvWarning_Update(&env, &envIn, &envLimits,
+                                            (uint32_t)now * portTICK_PERIOD_MS);
+        if ((env.raised & ENV_WARNING_BITS) != 0U) {
+            /* PERSON 1 INTEGRATION POINT (buzzer): a new environmental warning
+             * was raised. Play a short beep here, but only if no security
+             * alarm is active, since security alarms take priority.
+             */
+            envBeepRequests++;
+        }
+        sensorData.envMask = envMask;
+        sensorData.exposure = env.exposure;
+        sensorData.exposureValid = env.exposureValid;
+        sensorData.envLimitsFromWeb = g_rgLimitsConfigured;
+        sensorData.envLimits = envLimits;
+        sensorData.envBeepRequests = envBeepRequests;
+        wire.warningValid = true;
+        wire.warningMask = envMask;
+        wire.exposureValid = env.exposureValid;
+        wire.exposure = env.exposure;
         xSemaphoreGive(dataMutex);
         if ((TickType_t)(now-lastPublish) >= pdMS_TO_TICKS(500U)) {
             RG_MCX_Publish(&wire);
@@ -941,7 +1015,8 @@ static void MonitorTask(void *params) {
             );
 
             PRINTF(
-                "Light ADC percentage: %u%%\r\n",
+                "Light raw (filtered): %u | brightness (relative): %u%%\r\n",
+                (unsigned int)snapshot.lightFiltered,
                 (unsigned int)snapshot.lightPercent
             );
         } else {
@@ -990,6 +1065,26 @@ static void MonitorTask(void *params) {
             PRINTF("ESP temperature x10: %d | humidity x10: %u\r\n",
                    (int)esp.temperatureX10, (unsigned)esp.humidityX10);
         }
+        /* Person 4: environmental warnings, readable without the OLED. */
+        PRINTF("Env limits (%s): T %ld..%ld | RH %ld..%ld (x10) | light <=%ld%% | exposure %ld\r\n",
+               snapshot.envLimitsFromWeb ? "website" : "default",
+               (long)snapshot.envLimits.tempLowX10, (long)snapshot.envLimits.tempHighX10,
+               (long)snapshot.envLimits.humidityLowX10, (long)snapshot.envLimits.humidityHighX10,
+               (long)snapshot.envLimits.lightHighPercent, (long)snapshot.envLimits.exposureLimit);
+        PRINTF("Env warnings (mask 0x%02X):", (unsigned)snapshot.envMask);
+        if (snapshot.envMask == 0U) {
+            PRINTF(" NONE");
+        } else {
+            for (unsigned bit = 0U; bit < 8U; bit++) {
+                if ((snapshot.envMask & (1U << bit)) != 0U) {
+                    PRINTF(" [%s]", EnvWarning_Name((uint8_t)(1U << bit)));
+                }
+            }
+        }
+        PRINTF(" | beeps requested: %lu\r\n", (unsigned long)snapshot.envBeepRequests);
+        PRINTF("Light exposure: %s %lu percent-seconds\r\n",
+               snapshot.exposureValid ? "" : "(no valid light yet)",
+               (unsigned long)snapshot.exposure);
         PRINTF("UART frames=%lu CRC/parse=%lu hardware=%lu txErrors=%lu\r\n",
                (unsigned long)esp.rxFrames, (unsigned long)esp.parseErrors,
                (unsigned long)esp.hardwareErrors, (unsigned long)esp.txErrors);
