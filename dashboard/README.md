@@ -20,7 +20,6 @@ curl -X POST http://localhost:3000/api/readings \
   -d '{"temperature":21.4,"humidity":47.2,"light":38,"lidOpen":false}'
 ```
 
-- Demo data: pick a demo state with the Data picker, or open `?demo=normal|humidity|lid|offline`.
 - Theme: the sun/moon button in the rail switches dark and light; the choice is remembered per device.
 - Secondary views: `#history`, `#thresholds`.
 
@@ -42,8 +41,10 @@ curl -X POST http://localhost:3000/api/readings \
    `https://<your-service>.onrender.com/healthz` every 10 minutes. Running 24/7
    uses about 744 of the workspace's 750 free hours a month, so keep other free
    services out of that workspace.
-5. **ESP32.** Open `esp32/relicguard_uplink/relicguard_uplink.ino`, fill in the
-   Wi-Fi details, your Render URL and the token, and flash it.
+5. **ESP32.** In `RelicGuard_ESP32_UART/`, copy `rg_secrets.example.h` to
+   `rg_secrets.h`, fill in the Wi-Fi details, your Render URL and the token, and
+   flash `RelicGuard_ESP32_UART.ino`. The Serial Monitor prints `[UPLINK] Sent ...`
+   for each reading. `rg_secrets.h` is gitignored.
 
 ## API
 
@@ -58,7 +59,9 @@ every 2 seconds; the page marks data stale after 10.
 
 ## Notes from the current firmware
 
-- The photoresistor reports an ADC percentage, not lux. Either calibrate it to lux or
-  change the light unit and thresholds in `METRICS` / `DEMO_THRESHOLDS` in `public/app.js`.
-- The MCXC doesn't send anything to the ESP32 yet. The sketch's header comment
-  proposes a one-line format and the `PRINTF` that would produce it.
+- Temperature and humidity come from the ESP32's own DHT11. Lid and light come from
+  the MCXC's status frames over UART (`rg_esp_uart.cpp`). `rg_uplink.cpp` combines
+  them and sends `null` for anything stale or missing, e.g. lid and light while the
+  MCXC link is down.
+- Light is the photoresistor's ADC percentage (0–100 %), not lux. Thresholds are in
+  `DEFAULT_THRESHOLDS` in `public/app.js`.
