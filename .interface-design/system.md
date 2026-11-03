@@ -42,6 +42,26 @@ so digits stack; text is Public Sans. Colour goes on data and status only.
    Recent Events (5 rows, "All events (n)" opens History), Sensors (DHT11, photoresistor, reed
    switch, ESP32 uplink, each with its state).
 
+## Motion
+
+Minimal and purposeful; nothing animates on page load, numbers and charts never animate, and
+nothing loops. Curve: `--ease-out` (cubic-bezier(0.23, 1, 0.32, 1)); rows use a spring sampled into
+`linear()` (damping 0.72, about 4.5% overshoot, 500ms).
+
+- **Lid opens** (closed → open only): the cell eases to red over 240ms and one red ring goes out
+  about 8px, twice (800ms each), then stops. The cell stays red without moving.
+- **Alarm and event rows:** a new row fades in (200ms) while dropping 10px on the spring; a row
+  that leaves fades out in place (160ms); rows that shift slide on the spring (additive FLIP, so
+  interruptions carry on smoothly); the list's height eases (320ms) so the panels below glide.
+  Alarm rows are keyed by title and updated in place, never rebuilt.
+- **Theme switch:** a 240ms cross-fade (View Transitions).
+- **Dialogs:** fade and rise in (200ms), fade out (150ms), backdrop with them.
+- **Status colours** (feed, readings, finding, lid word) ease over 240ms.
+- **Rail icons:** scale to 0.88 while pressed (120ms).
+- **Reduced motion:** fades only; no ring, slides, drops or height easing.
+
+Prototype with on/off switches for each: `design-demos/motion/`.
+
 ## Tokens
 
 Dark (default) and light share names; `<html data-theme>` picks the set. The choice is saved in

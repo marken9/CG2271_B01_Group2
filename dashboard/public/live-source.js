@@ -2,9 +2,17 @@
  * Live data source.
  *
  * Streams readings from server.js (GET /api/stream, Server-Sent Events) and
- * calls onSample() with the same shape as demo-source.js, plus:
+ * calls onSample() with (null fields mean "no valid reading"):
  *
- *   lidOpenSince: number | null   // when the lid opened
+ *   {
+ *     receivedAt: number,          // ms epoch, on this browser's clock
+ *     connected: boolean,          // stream open and the ESP32 is posting
+ *     temperature: number | null,  // °C   (ESP32 DHT11)
+ *     humidity: number | null,     // % RH (ESP32 DHT11)
+ *     light: number | null,        // %    (MCXC photoresistor)
+ *     lidOpen: boolean | null,     // MCXC reed switch
+ *     lidOpenSince: number | null, // when the lid opened
+ *   }
  *
  * The server keeps the lid event log so it survives reloads; those
  * events arrive through onEvents(events, replace).

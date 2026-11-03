@@ -1,4 +1,3 @@
-import { createDemoSource, DEMO_SCENARIOS } from "./demo-source.js";
 import { createLiveSource } from "./live-source.js";
 
 /* ============================================================
@@ -8,20 +7,20 @@ import { createLiveSource } from "./live-source.js";
 const METRICS = {
   temperature: { label: "Temperature", unit: "°C", decimals: 1, scale: [10, 35] },
   humidity: { label: "Humidity", unit: "%\u00A0RH", decimals: 1, scale: [20, 80] },
-  light: { label: "Light", unit: "lx", decimals: 0, scale: [0, 300] },
+  light: { label: "Light", unit: "%", decimals: 0, scale: [0, 100] },
 };
 
-/* Demo values only, not conservation standards. */
-const DEMO_THRESHOLDS = {
+/* Starting limits for testing, not conservation standards. */
+const DEFAULT_THRESHOLDS = {
   temperature: { min: 18, max: 24 },
   humidity: { min: 40, max: 55 },
-  light: { min: 0, max: 150 },
+  light: { min: 0, max: 60 },
 };
 
 /* A live feed with no new sample for this long is treated as stale. */
 const STALE_AFTER_MS = 10_000;
 
-const THRESHOLDS_KEY = "relicguard.thresholds.v1";
+const THRESHOLDS_KEY = "relicguard.thresholds.v2";
 const THEME_KEY = "relicguard.theme";
 const MAX_EVENTS = 50;
 const VISIBLE_EVENTS = 5;
@@ -98,7 +97,7 @@ function isValidRange(metric, range) {
 }
 
 function loadThresholds() {
-  const thresholds = structuredClone(DEMO_THRESHOLDS);
+  const thresholds = structuredClone(DEFAULT_THRESHOLDS);
 
   try {
     const stored = JSON.parse(localStorage.getItem(THRESHOLDS_KEY));
@@ -108,7 +107,7 @@ function loadThresholds() {
       }
     }
   } catch {
-    /* Storage unavailable or corrupt: fall back to demo values. */
+    /* Storage unavailable or corrupt: fall back to the defaults. */
   }
 
   return thresholds;
@@ -152,13 +151,12 @@ function applyServerEvents(events, replace) {
   addEvents(events.map((event) => ({ ...event, server: true })));
 }
 
-/* With the live source the server logs lid changes, so the page doesn't log
- * them a second time. Unknown-state faults are still the page's. */
+/* The server logs lid changes, so the page doesn't log them a second time.
+ * Unknown-state faults are still the page's. */
 const SERVER_LOGGED = new Set(["lid"]);
-let serverLogsSecurity = false;
 
 function pageLogs(key, severity) {
-  return !(serverLogsSecurity && SERVER_LOGGED.has(key) && severity !== "fault");
+  return !(SERVER_LOGGED.has(key) && severity !== "fault");
 }
 
 /* ============================================================
@@ -220,7 +218,7 @@ function evaluate(sample, now, thresholds) {
         severity: "caution",
         title: `${meta.label} ${direction} limit`,
         band: `${meta.label} ${status} · ${direction} ${status === "high" ? range.max : range.min}`,
-        detail: `Reading ${fmtValue(metric, value)}\u00A0${meta.unit}. Limits are ${fmtRange(metric, range)} (demo values).`,
+        detail: `Reading ${fmtValue(metric, value)}\u00A0${meta.unit}. Limits are ${fmtRange(metric, range)}.`,
       });
     } else if (status === "missing" && feed === "live") {
       conditions.push({
@@ -439,10 +437,25 @@ function renderLid(result, now) {
     const known = result.lidOpen;
     view = { state: "unknown", text: "Unknown", sub: known == null ? "" : `Last known ${known ? "open" : "closed"}` };
   }
+  /* A real closed → open change gets the ring; loading with the lid open doesn't. */
+  if (renderedLidState === "secure" && view.state === "breach") ringLid(label);
+  renderedLidState = view.state;
   label.dataset.state = view.state;
   setText($('[data-field="text"]', label), view.text);
   setText($('[data-field="sub"]', label), view.sub);
 }
+
+let renderedLidState = null;
+
+function ringLid(label) {
+  label.classList.remove("lid-ring");
+  void label.offsetWidth; // restart if it is somehow still running
+  label.classList.add("lid-ring");
+}
+
+$("#lid-label").addEventListener("animationend", (event) => {
+  if (event.animationName === "lid-ring") event.currentTarget.classList.remove("lid-ring");
+});
 
 /* ---------- Lanes: the lid and the climate on one time axis ---------- */
 
@@ -642,25 +655,46 @@ function renderAlarms() {
     detail: a.detail,
   }));
 
-  renderOnce($("#alarm-list"), items, (list) => {
-    if (!list.length) {
-      const note = el("p", "none");
-      note.append(el("b", null, "None open"), "Lid closed and readings within demo limits.");
-      const li = el("li");
-      li.append(note);
-      return [li];
-    }
-    return list.map((item) => {
-      const li = el("li");
-      const main = el("span");
-      const title = el("span", "t", item.title);
-      title.dataset.severity = item.severity;
-      main.append(title, el("small", null, item.sub));
-      if (item.detail) main.append(el("span", "visually-hidden", ` ${item.detail}`));
-      li.append(main, el("span", "since fig", item.since));
-      return li;
-    });
+  /* Keyed by title: a row stays the same element while its alarm is open and
+   * only its text is updated. The hidden detail carries the live reading, so
+   * rebuilding on every change would replace the rows every sample and cut off
+   * their motion. */
+  const list = $("#alarm-list");
+  const existing = new Map([...list.children].map((li) => [li.dataset.key, li]));
+  const rows = items.length
+    ? items.map((item) => alarmRow(existing.get(item.title), item))
+    : [existing.get("none") ?? noAlarmsRow()];
+  const keep = new Set(rows);
+  for (const li of [...list.children]) if (!keep.has(li)) li.remove();
+  rows.forEach((li, i) => {
+    if (list.children[i] !== li) list.insertBefore(li, list.children[i] ?? null);
   });
+}
+
+function noAlarmsRow() {
+  const li = el("li");
+  li.dataset.key = "none";
+  const note = el("p", "none");
+  note.append(el("b", null, "None open"), "Lid closed and readings within limits.");
+  li.append(note);
+  return li;
+}
+
+function alarmRow(li, item) {
+  if (!li) {
+    li = el("li");
+    li.dataset.key = item.title;
+    const main = el("span");
+    main.append(el("span", "t"), el("small"), el("span", "visually-hidden"));
+    li.append(main, el("span", "since fig"));
+  }
+  const title = $(".t", li);
+  setText(title, item.title);
+  title.dataset.severity = item.severity;
+  setText($("small", li), item.sub);
+  setText($(".visually-hidden", li), item.detail ? ` ${item.detail}` : "");
+  setText($(".since", li), item.since);
+  return li;
 }
 
 function renderSensors(result) {
@@ -724,6 +758,151 @@ function update() {
   renderAlarms();
   renderSensors(result);
   renderEvents();
+  animateListsOnce();
+}
+
+/* ============================================================
+ * Motion: alarm and event rows
+ * ============================================================ */
+
+/* Rows enter, leave and slide; their list's height eases with them.
+ *
+ * The slide is an additive FLIP (composite: "add"): each layout change adds its
+ * own offset animation on top of any still running, so a row that moves again
+ * mid-slide carries on from where it is instead of jumping. The spring is
+ * sampled into a CSS linear() easing: damping 0.72, about 4.5% overshoot. */
+const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+const SPRING_MS = 500;
+const SPRING = springEasing(0.72);
+const FADE_IN_MS = 200;
+const FADE_OUT_MS = 160;
+const HEIGHT_MS = 320;
+
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* A damped spring from 0 to 1 that settles (within 0.1%) at t = 1. */
+function springEasing(damping, samples = 48) {
+  const omega = Math.log(1000) / damping;
+  const omegaD = omega * Math.sqrt(1 - damping * damping);
+  const points = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples;
+    const decay = Math.exp(-damping * omega * t);
+    points.push(+(1 - decay * (Math.cos(omegaD * t) + ((damping * omega) / omegaD) * Math.sin(omegaD * t))).toFixed(4));
+  }
+  points[samples] = 1;
+  return `linear(${points.join(", ")})`;
+}
+
+function animateList(list, keyOf) {
+  const panel = list.parentElement;
+  panel.style.position = "relative";
+  /* Rows that have left fade out in a layer over the list, out of the renderers' way. */
+  const ghosts = document.createElement(list.tagName);
+  ghosts.className = `${list.className} row-ghosts`;
+  ghosts.setAttribute("aria-hidden", "true");
+  list.after(ghosts);
+
+  /* Layout positions (offsetTop ignores transforms), so a running slide never
+   * feeds back into the next measurement. */
+  const layoutTop = (li) => li.offsetTop - list.offsetTop;
+  const snapshot = () =>
+    new Map(
+      [...list.children].map((li) => {
+        const cs = getComputedStyle(li);
+        return [keyOf(li), { top: layoutTop(li), paddingTop: cs.paddingTop, borderTop: `${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor}` }];
+      }),
+    );
+  let before = snapshot();
+  let height = list.offsetHeight;
+
+  const enter = (li) => {
+    li.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_IN_MS, easing: EASE_OUT });
+    if (!reducedMotion()) {
+      li.animate([{ transform: "translateY(-10px) scale(0.97)" }, { transform: "none" }], {
+        duration: SPRING_MS,
+        easing: SPRING,
+        composite: "add",
+      });
+    }
+  };
+
+  const leave = (node, was) => {
+    for (const animation of node.getAnimations()) animation.cancel();
+    delete node.dataset.key;
+    /* Anchored to the list's top, so the shrinking list doesn't drag the ghost. */
+    Object.assign(ghosts.style, { top: `${list.offsetTop}px`, left: `${list.offsetLeft}px`, width: `${list.offsetWidth}px` });
+    Object.assign(node.style, {
+      position: "absolute",
+      top: `${was.top}px`,
+      left: "0",
+      right: "0",
+      margin: "0",
+      paddingTop: was.paddingTop,
+      borderTop: was.borderTop,
+    });
+    ghosts.append(node);
+    const out = reducedMotion() ? { opacity: 0 } : { opacity: 0, transform: "translateY(-4px) scale(0.97)" };
+    node
+      .animate([{ opacity: 1, transform: "none" }, out], { duration: FADE_OUT_MS, easing: EASE_OUT, fill: "forwards" })
+      .finished.finally(() => node.remove());
+  };
+
+  const resize = () => {
+    const running = list.getAnimations().find((animation) => animation.id === "height");
+    const from = running ? list.getBoundingClientRect().height : height;
+    running?.cancel();
+    const to = list.offsetHeight;
+    height = to;
+    if (Math.abs(from - to) < 1 || reducedMotion()) return;
+    list.style.overflow = "clip";
+    const animation = list.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: HEIGHT_MS, easing: EASE_OUT });
+    animation.id = "height";
+    animation.finished.then(() => (list.style.overflow = ""), () => {});
+  };
+
+  new MutationObserver((records) => {
+    const rows = [...list.children];
+    const keys = new Set(rows.map(keyOf));
+
+    for (const record of records) {
+      for (const node of record.removedNodes) {
+        if (node.nodeType !== 1) continue;
+        const key = keyOf(node);
+        const was = before.get(key);
+        if (was && !keys.has(key)) leave(node, was);
+      }
+    }
+
+    for (const li of rows) {
+      const was = before.get(keyOf(li));
+      if (!was) {
+        enter(li);
+        continue;
+      }
+      const dy = was.top - layoutTop(li);
+      if (Math.abs(dy) < 0.5 || reducedMotion()) continue;
+      li.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0)" }], {
+        duration: SPRING_MS,
+        easing: SPRING,
+        composite: "add",
+      });
+    }
+
+    resize();
+    before = snapshot();
+  }).observe(list, { childList: true });
+}
+
+/* Start once the first data has rendered, so nothing animates on page load.
+ * Alarm rows keep their element while open; events are matched by their text. */
+let listsAnimated = false;
+
+function animateListsOnce() {
+  if (listsAnimated || !state.sample) return;
+  listsAnimated = true;
+  animateList($("#alarm-list"), (li) => li.dataset.key ?? li.textContent);
+  animateList($("#event-list"), (li) => li.textContent);
 }
 
 /* Redraw the plots when their width changes. */
@@ -810,7 +989,7 @@ thresholdsForm.addEventListener("submit", (event) => {
   update();
 });
 
-$("#thresholds-reset").addEventListener("click", () => fillThresholdsForm(DEMO_THRESHOLDS));
+$("#thresholds-reset").addEventListener("click", () => fillThresholdsForm(DEFAULT_THRESHOLDS));
 
 /* ============================================================
  * History dialog
@@ -973,7 +1152,7 @@ function renderHistory() {
     const title = el("span", "chart-title", meta.label);
     title.append(el("span", "unit", meta.unit));
     const legend = el("span", "chart-legend");
-    legend.append(el("span", "chart-legend-band"), `Limits ${fmtRange(metric, state.thresholds[metric])}${isLive ? "" : " (demo)"}`);
+    legend.append(el("span", "chart-legend-band"), `Limits ${fmtRange(metric, state.thresholds[metric])}`);
     head.append(title, legend);
 
     figure.append(head, el("div", "chart-plot"));
@@ -1096,7 +1275,10 @@ function applyTheme(theme, save) {
 
 applyTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark", false);
 $("#theme-toggle").addEventListener("click", () => {
-  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  /* Cross-fade the whole page instead of flashing it (styles.css sets the timing). */
+  if (document.startViewTransition) document.startViewTransition(() => applyTheme(next, true));
+  else applyTheme(next, true);
 });
 
 /* Close dialogs on backdrop click. */
@@ -1106,54 +1288,14 @@ for (const dialog of document.querySelectorAll("dialog")) {
   });
 }
 
-/* Data picker: the live feed by default, or a demo state with ?demo=<state>. */
-const dataSelect = $("#data-source");
-const params = new URLSearchParams(location.search);
-const demoParam = params.get("demo");
-const initialScenario = demoParam === null ? null : DEMO_SCENARIOS[demoParam] ? demoParam : "normal";
-const isLive = initialScenario === null;
-
-const liveOption = el("option", null, "Live feed");
-liveOption.value = "live";
-const demoGroup = el("optgroup");
-demoGroup.label = "Demo";
-for (const [value, { label }] of Object.entries(DEMO_SCENARIOS)) {
-  const option = el("option", null, label);
-  option.value = value;
-  demoGroup.append(option);
-}
-dataSelect.append(liveOption, demoGroup);
-dataSelect.value = initialScenario ?? "live";
-$("#mode-tag").hidden = isLive;
-setText($("#history-sub"), `Last 6 hours · 5-minute averages · ${isLive ? "live" : "demo"} data`);
-
-dataSelect.addEventListener("change", () => {
-  const url = new URL(location.href);
-  if (dataSelect.value === "live") url.searchParams.delete("demo");
-  else url.searchParams.set("demo", dataSelect.value);
-
-  /* Switching between live and demo starts over with a fresh page. */
-  if ((dataSelect.value === "live") !== isLive) {
-    location.assign(url);
-    return;
-  }
-  history.replaceState(null, "", url);
-  source.setScenario(dataSelect.value);
-});
+setText($("#history-sub"), "Last 6 hours · 5-minute averages");
 
 function onSample(sample) {
   state.sample = sample;
   update();
 }
 
-const source = isLive
-  ? createLiveSource({ onSample, onEvents: applyServerEvents })
-  : createDemoSource({ scenario: initialScenario, onSample });
-
-serverLogsSecurity = isLive;
-if (!isLive) {
-  for (const event of source.seedEvents()) logEvent(event.at, event.kind, event.text);
-}
+const source = createLiveSource({ onSample, onEvents: applyServerEvents });
 source.start();
 setInterval(update, 1000);
 openDialogFromHash();

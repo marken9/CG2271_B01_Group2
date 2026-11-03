@@ -285,17 +285,6 @@ a {
   letter-spacing: -0.01em;
 }
 
-.mode-tag {
-  padding: 1px 8px;
-  border-radius: 4px;
-  background: var(--raised);
-  color: var(--warning);
-  font-size: 12px;
-  line-height: 20px;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
 .finding {
   margin-top: 6px;
   color: var(--muted);
@@ -317,27 +306,6 @@ a {
   justify-content: flex-end;
   gap: 12px 20px;
   margin-left: auto;
-}
-
-.data-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-}
-
-.data-picker select {
-  height: 34px;
-  padding: 0 28px 0 10px;
-  border: 1px solid var(--control);
-  border-radius: var(--radius);
-  background-color: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.data-picker select:hover {
-  border-color: var(--muted);
 }
 
 .feed {
@@ -522,7 +490,33 @@ a {
 
 /* Lid open: the whole label cell turns red, border and background. */
 .lid-label {
+  position: relative;
   border-radius: var(--radius);
+  transition: background-color 240ms var(--ease-out), box-shadow 240ms var(--ease-out);
+}
+
+/* The lid has just opened: one red ring goes out, twice (app.js adds the class
+ * only on a closed → open change, never on load, and never repeats it). */
+.lid-label.lid-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px var(--negative);
+  pointer-events: none;
+  animation: lid-ring 800ms var(--ease-out) 2;
+}
+
+/* About 8px of travel on every side of the 196px-wide cell. */
+@keyframes lid-ring {
+  from {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.08, 1.18);
+  }
 }
 
 .lid-label[data-state="breach"] {
@@ -965,14 +959,46 @@ a {
   background: var(--backdrop);
 }
 
-.sheet[open] {
-  animation: sheet-in 200ms var(--ease-out);
+/* Dialogs fade and rise in, and fade out again on close; the backdrop with them. */
+.sheet {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out),
+    overlay 150ms allow-discrete,
+    display 150ms allow-discrete;
 }
 
-@keyframes sheet-in {
-  from {
+.sheet[open] {
+  opacity: 1;
+  transform: none;
+  transition-duration: 200ms;
+}
+
+@starting-style {
+  .sheet[open] {
     opacity: 0;
     transform: translateY(8px) scale(0.98);
+  }
+}
+
+.sheet::backdrop {
+  opacity: 0;
+  transition:
+    opacity 150ms var(--ease-out),
+    overlay 150ms allow-discrete,
+    display 150ms allow-discrete;
+}
+
+.sheet[open]::backdrop {
+  opacity: 1;
+  transition-duration: 200ms;
+}
+
+@starting-style {
+  .sheet[open]::backdrop {
+    opacity: 0;
   }
 }
 
@@ -1288,14 +1314,83 @@ a {
 
 /* ---------- Motion and forced colours ---------- */
 
+/* ---------- Motion ---------- */
+
+/* Status colours ease instead of snapping (a reading crossing a limit, the feed
+ * going stale, the lid word changing). */
+.feed i,
+.feed span,
+.finding,
+.lane-label .value,
+.lane-label .note,
+.seal-word {
+  transition:
+    color 240ms var(--ease-out),
+    background-color 240ms var(--ease-out),
+    outline-color 240ms var(--ease-out);
+}
+
+/* Alarm and event rows grow from their top edge as they drop into place. */
+.alarm-rows li,
+.event {
+  transform-origin: 50% 0;
+}
+
+/* Rows that have just left fade out here, over the list (app.js). */
+.row-ghosts {
+  position: absolute;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+/* Rail press feedback; hover colour eases on a mouse only. */
+.rail a .icon,
+.theme-toggle .icon {
+  transition: transform 120ms var(--ease-out);
+}
+
+.rail a:active .icon,
+.theme-toggle:active .icon {
+  transform: scale(0.88);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .rail a,
+  .theme-toggle {
+    transition: color 120ms var(--ease-out);
+  }
+}
+
+/* Theme switch: a cross-fade (View Transitions) instead of a flash. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 240ms;
+  animation-timing-function: var(--ease-out);
+}
+
+/* Reduced motion keeps the fades and drops the travel. */
 @media (prefers-reduced-motion: reduce) {
   .btn-invert,
-  .btn {
+  .btn,
+  .rail a .icon,
+  .theme-toggle .icon {
     transition: none;
   }
 
-  .sheet[open] {
+  .lid-label.lid-ring::after {
     animation: none;
+  }
+
+  .sheet,
+  .sheet[open] {
+    transform: none;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 150ms;
   }
 }
 
