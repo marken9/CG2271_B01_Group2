@@ -3,6 +3,7 @@
 #include "rg_dht.h"
 #include "rg_mpu.h"
 #include "rg_oled.h"
+#include "rg_uplink.h"
 
 // ============================================================
 // CONFIGURATION
@@ -54,6 +55,9 @@ void setup()
 
     // Person 4: OLED display on the shared I2C bus (GPIO8/9)
     RG_OLED_Begin();
+
+    // Wi-Fi uplink to the dashboard (needs rg_secrets.h)
+    RG_Uplink_Begin();
 
     // Serial Monitor commands
     Serial.println("\nTest controls:");
