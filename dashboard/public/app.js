@@ -894,6 +894,69 @@ function animateList(list, keyOf) {
   }).observe(list, { childList: true });
 }
 
+/* ---------- Rubber band at the page's ends ----------
+ * Scrolling a wheel or touchpad past the top or bottom pulls the page a little,
+ * with resistance that grows the further it goes, then springs back. Apple
+ * platforms and phones already do this natively, so it runs only on Windows and
+ * Linux, only for wheel input, and never with reduced motion or a dialog open. */
+const RUBBER_LIMIT = 64; // px the page can never pass, however hard it's pushed
+const RUBBER_RELEASE_MS = 120; // wheel silence that counts as letting go
+
+function rubberBandScrolling() {
+  const platform = navigator.userAgentData?.platform ?? navigator.platform ?? "";
+  if (/mac|iphone|ipad|ipod|android/i.test(platform) || /android/i.test(navigator.userAgent)) return;
+
+  const page = $(".app");
+  let pull = 0; // raw distance pushed past the end, signed (+ above the top)
+  let release = null;
+
+  /* The rubber-band curve: easy at first, then ever stiffer, never past the limit. */
+  const offset = (distance) => Math.sign(distance) * (1 - 1 / ((Math.abs(distance) * 0.55) / RUBBER_LIMIT + 1)) * RUBBER_LIMIT;
+  /* Its inverse: how far past the end gives this offset. */
+  const distanceFor = (shift) => Math.sign(shift) * ((1 / (1 - Math.min(Math.abs(shift), RUBBER_LIMIT - 1) / RUBBER_LIMIT) - 1) * RUBBER_LIMIT) / 0.55;
+  const currentShift = () => new DOMMatrixReadOnly(getComputedStyle(page).transform).m42;
+
+  const springBack = () => {
+    const from = offset(pull);
+    pull = 0;
+    page.getAnimations().forEach((animation) => animation.cancel());
+    page.style.transform = "";
+    if (Math.abs(from) < 0.5) return;
+    page.animate([{ transform: `translateY(${from}px)` }, { transform: "none" }], { duration: SPRING_MS, easing: SPRING });
+  };
+
+  window.addEventListener(
+    "wheel",
+    (event) => {
+      if (event.ctrlKey || reducedMotion() || document.querySelector("dialog[open]")) return;
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+      const atTop = window.scrollY <= 0;
+      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1;
+      const pastTop = delta < 0 && atTop && pull >= 0;
+      const pastBottom = delta > 0 && atBottom && pull <= 0;
+
+      if (!pastTop && !pastBottom) {
+        if (pull) springBack(); // scrolling back the other way lets go at once
+        return;
+      }
+      /* Pushed again mid-spring: carry on from where the page visibly is. */
+      const springing = page.getAnimations();
+      if (springing.length) {
+        pull = distanceFor(currentShift());
+        springing.forEach((animation) => animation.cancel());
+      }
+      pull -= delta;
+      page.style.transform = `translateY(${offset(pull).toFixed(1)}px)`;
+      clearTimeout(release);
+      release = setTimeout(springBack, RUBBER_RELEASE_MS);
+    },
+    { passive: true },
+  );
+}
+
+rubberBandScrolling();
+
 /* Start once the first data has rendered, so nothing animates on page load.
  * Alarm rows keep their element while open; events are matched by their text. */
 let listsAnimated = false;

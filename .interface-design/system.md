@@ -58,6 +58,9 @@ nothing loops. Curve: `--ease-out` (cubic-bezier(0.23, 1, 0.32, 1)); rows use a 
 - **Dialogs:** fade and rise in (200ms), fade out (150ms), backdrop with them.
 - **Status colours** (feed, readings, finding, lid word) ease over 240ms.
 - **Rail icons:** scale to 0.88 while pressed (120ms).
+- **Page ends:** scrolling a wheel or touchpad past the top or bottom pulls the page with
+  rubber-band resistance (about 30px for one notch, never more than 64px) and it springs back.
+  Windows and Linux only: macOS, iOS and Android already do this natively.
 - **Reduced motion:** fades only; no ring, slides, drops or height easing.
 
 Prototype with on/off switches for each: `design-demos/motion/`.
