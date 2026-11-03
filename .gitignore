@@ -39,3 +39,7 @@ __pycache__/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Design tool working files
+.taste-skill/
+.impeccable/
