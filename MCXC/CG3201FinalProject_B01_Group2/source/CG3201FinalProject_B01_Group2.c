@@ -9,12 +9,14 @@
  * Sensors:
  *   KY-021 Reed Switch  - PTA12 (D3)
  *   KY-018 Photoresistor - PTB0 (A0 / ADC0_SE8)
- *   KY-015 DHT11        - PTA5 (D5)
+ *   KY-023 Joystick     - PTB1 (A1), PTB2 (A2), PTA13 (D8)
+ *   KY-015 DHT11        - PTA5 (D5), legacy test disabled by default
  *
  * FreeRTOS:
- *   Door Task     - Interrupt + Binary Semaphore
- *   Light Task    - Periodic ADC Polling
- *   Climate Task  - Periodic DHT11 Polling
+ *   Input Task    - Reed/button interrupts + binary semaphore, debounce
+ *   ADC Task      - Sole ADC owner, joystick directions -> event queue
+ *   Control Task  - Passcode verification and timed authorization
+ *   Climate Task  - Optional legacy DHT11 test
  *   Monitor Task  - Prints sensor readings
  */
 
@@ -37,6 +39,11 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
+#include "queue.h"
+#include "joystick_password.h"
+#include "alarm.h"
+#include "rg_mcx_uart.h"
+#include "env_warning.h"
 
 /* ============================================================
  * 1. CONFIGURATION
@@ -50,6 +57,8 @@
 #define REED_PIN            12U     // PTA12 - J1 Pin 8
 
 // Photoresistor (KY-018) - A0 / J4 Pin 2
+// NOTE: our module's power labels are wrong. Wire "-" pin -> 3.3 V (J3 pin 8)
+// and the middle pin -> GND (J3 pin 12). Wired as labelled, S reads 0 V.
 #define LIGHT_PORT          PORTB
 #define LIGHT_PIN           0U      // PTB0 - J4 Pin 2
 
@@ -58,14 +67,47 @@
 #define DHT_PORT            PORTA
 #define DHT_PIN             5U      // PTA5 - J1 Pin 12
 
+/* Joystick: power from 3.3 V, including modules labelled "+5V". */
+#define JOY_X_PIN          1U      /* PTB1 / A1 / J4 pin 4 / ADC0_SE9 */
+#define JOY_Y_PIN          2U      /* PTB2 / A2 / J4 pin 6 / ADC0_SE12 */
+#define JOY_X_CHANNEL      9U
+#define JOY_Y_CHANNEL      12U
+#define JOY_BUTTON_PIN     13U     /* PTA13 / D8 / J2 pin 2 */
+#define JOY_SWAP_AXES      0
+#define JOY_INVERT_X       0
+#define JOY_INVERT_Y       0
+
+/* Sensor sampling options for the current bring-up session. */
+#define ENABLE_LIGHT_SENSOR 1
+#define ENABLE_MCX_DHT      0     /* Final design puts the DHT on ESP32. */
+#define ADC_SAMPLE_MS       20U
+#define ENTRY_TIMEOUT_MS    10000U
+#define ACCESS_WINDOW_MS    30000U
+#define INPUT_QUEUE_LENGTH  16U
+#define ALARM_BLINK_HALF_MS 250U  /* 250 ms color on, 250 ms off. */
+
+/* KY-006 passive buzzer: S -> D10 / PTD4 / J2 pin 6 (ALT4 TPM0_CH4). */
+#define BUZZER_PIN          4U
+#define BUZZER_CHANNEL      4U
+#define BUZZER_TONE_HZ      2000U
+
 /* ---------- Sensor Settings ---------- */
 
-/* Change this to 0 if your reed switch operates inverted. */
-#define REED_OPEN_LEVEL     0U
+/* Magnet near: LOW = lid closed. Magnet away: HIGH = lid open. */
+#define REED_OPEN_LEVEL     1U
 
 #define REED_DEBOUNCE_MS    25U
 
 #define LIGHT_SAMPLE_MS     100U
+
+/* Person 4: two-point light calibration (relative brightness, not lux).
+ * Read "Light raw (filtered)" on the serial console with the sensor fully
+ * covered (DARK) and with a phone torch about 5 cm away (BRIGHT), then put
+ * those two numbers here. Either order works: some modules read LOWER when
+ * brighter. Until calibrated, brightness equals the raw ADC percentage.
+ */
+#define LIGHT_DARK_RAW      0U
+#define LIGHT_BRIGHT_RAW    4095U
 #define DHT_SAMPLE_MS       2000U
 #define PRINT_SAMPLE_MS     1000U
 
@@ -87,16 +129,18 @@
 
 /* ---------- Task Priorities ---------- */
 
-#define DOOR_TASK_PRIORITY     4U
-#define LIGHT_TASK_PRIORITY    2U
+#define INPUT_TASK_PRIORITY    4U
+#define ADC_TASK_PRIORITY      2U
+#define CONTROL_TASK_PRIORITY  3U
 #define CLIMATE_TASK_PRIORITY  2U
 #define MONITOR_TASK_PRIORITY  1U
 
 /* ---------- Task Stack Sizes ---------- */
 /* Stack sizes below are in FreeRTOS stack words, not bytes. */
 
-#define DOOR_STACK_SIZE       256U
-#define LIGHT_STACK_SIZE      256U
+#define INPUT_STACK_SIZE      256U
+#define ADC_STACK_SIZE        256U
+#define CONTROL_STACK_SIZE    256U
 #define CLIMATE_STACK_SIZE    384U
 #define MONITOR_STACK_SIZE    512U
 
@@ -104,23 +148,76 @@
  * 2. GLOBAL VARIABLES
  * ============================================================ */
 
+typedef enum {
+    ENTRY_IDLE, ENTRY_TYPING, ENTRY_ACCEPTED, ENTRY_REJECTED,
+    ENTRY_EXPIRED, ENTRY_TOO_LONG, ENTRY_ACCESS_ENDED
+} EntryStatus;
+
+typedef enum { EVENT_DIRECTION, EVENT_SUBMIT, EVENT_INPUT_FAULT, EVENT_DOOR_CHANGED } InputEventType;
+typedef struct {
+    InputEventType type;
+    JoystickDirection direction;
+    TickType_t timestamp;
+    bool doorOpen;
+} InputEvent;
+
 typedef struct {
     bool doorOpen;
     bool doorValid;
 
     uint16_t lightRaw;
-    uint8_t lightPercent;
+    uint16_t lightFiltered;
+    uint8_t lightPercent;   /* Relative brightness after calibration. */
     bool lightValid;
+    uint32_t lightSamples;
+    uint32_t lightReadErrors;
+    uint8_t lightReference;
+    uint8_t lightPinMux;
+    uint8_t lightPullEnabled;
+    uint8_t lightSelectedChannel;
 
     int16_t temperatureX10;
     uint16_t humidityX10;
     bool climateValid;
+
+    uint16_t joystickX;
+    uint16_t joystickY;
+    bool joystickValid;
+    bool buttonPressed;
+    JoystickDirection joystickDirection;
+    uint8_t entryLength;
+    EntryStatus entryStatus;
+    bool accessGranted;
+    AlarmState alarmState;
+
+    /* Person 4: environmental controller results (written by ControlTask). */
+    uint8_t envMask;
+    uint32_t exposure;
+    bool exposureValid;
+    bool envLimitsFromWeb;
+    EnvLimits envLimits;
+    uint32_t envBeepRequests;
 } SensorData_t;
 
 static SensorData_t sensorData = {0};
 
-static SemaphoreHandle_t doorSemaphore = NULL;
+/* Person 4: consume these limits in the environmental controller.
+ * No limits are silently assumed until a validated L command arrives.
+ * Only ControlTask writes them; protect future cross-task readers.
+ */
+RG_Limits g_rgLimits = {0};
+bool g_rgLimitsConfigured = false;
+uint32_t g_rgMotionEventCount = 0; /* Only ControlTask writes. */
+
+static SemaphoreHandle_t inputSemaphore = NULL;
 static SemaphoreHandle_t dataMutex = NULL;
+static QueueHandle_t inputQueue = NULL;
+
+/* Diagnostic counter: only the GPIO ISR writes it. The monitor task
+ * reads the aligned 32-bit value without modifying it.
+ */
+static volatile uint32_t reedInterruptCount = 0U;
+static volatile uint32_t buttonInterruptCount = 0U;
 
 /* ============================================================
  * 3. FUNCTION DECLARATIONS
@@ -129,9 +226,15 @@ static SemaphoreHandle_t dataMutex = NULL;
 static void Reed_Init(void);
 static bool Reed_IsOpen(void);
 
-static bool Light_Init(void);
-static bool Light_Read(uint16_t *value);
+static bool ADC_Init(void);
+static bool ADC_Read(uint8_t channel, uint16_t *value);
+static void JoystickButton_Init(void);
+static void RGB_Init(void);
+static void RGB_Write(uint8_t colors);
+static void Buzzer_Init(void);
+static void Buzzer_Set(bool on);
 
+#if ENABLE_MCX_DHT
 static void DHT_Init(void);
 static bool DHT_Read(int16_t *temperatureX10,
                      uint16_t *humidityX10);
@@ -140,9 +243,11 @@ static void DHT_SetInput(void);
 static bool DHT_WaitForLevel(uint8_t level,
                              uint32_t timeoutUs);
 
-static void DoorTask(void *params);
-static void LightTask(void *params);
 static void ClimateTask(void *params);
+#endif
+static void InputTask(void *params);
+static void ADCTask(void *params);
+static void ControlTask(void *params);
 static void MonitorTask(void *params);
 
 /* ============================================================
@@ -157,9 +262,13 @@ static void Reed_Init(void) {
 
     CLOCK_EnableClock(kCLOCK_PortA);
 
-    PORT_SetPinMux(REED_PORT,
-                   REED_PIN,
-                   kPORT_MuxAsGpio);
+    /* GPIO input with an internal pull-up: an unconnected input reads
+     * HIGH, while a contact to GND reads LOW. Configure before enabling
+     * the interrupt so floating inputs do not obscure reed diagnostics.
+     */
+    REED_PORT->PCR[REED_PIN] = PORT_PCR_MUX(1U)
+                             | PORT_PCR_PE_MASK
+                             | PORT_PCR_PS_MASK;
 
     GPIO_PinInit(REED_GPIO,
                  REED_PIN,
@@ -176,15 +285,13 @@ static void Reed_Init(void) {
         (1UL << REED_PIN)
     );
 
-    /* Keep the ISR at the lowest implemented NVIC priority
-     * because it calls a FreeRTOS FromISR API.
-     */
+    /* Low interrupt urgency is sufficient for these mechanical inputs. */
     NVIC_SetPriority(
         PORTA_IRQn,
         (1U << __NVIC_PRIO_BITS) - 1U
     );
 
-    EnableIRQ(PORTA_IRQn);
+    /* InputTask enables the IRQ after the scheduler has started. */
 }
 
 static bool Reed_IsOpen(void) {
@@ -196,8 +303,71 @@ static bool Reed_IsOpen(void) {
     return (value == REED_OPEN_LEVEL);
 }
 
+static void JoystickButton_Init(void) {
+    CLOCK_EnableClock(kCLOCK_PortA);
+    PORTA->PCR[JOY_BUTTON_PIN] = PORT_PCR_MUX(1U)
+                               | PORT_PCR_PE_MASK | PORT_PCR_PS_MASK;
+    GPIOA->PDDR &= ~(1UL << JOY_BUTTON_PIN);
+    PORT_SetPinInterruptConfig(PORTA, JOY_BUTTON_PIN, kPORT_InterruptEitherEdge);
+    PORTA->ISFR = (1UL << JOY_BUTTON_PIN); /* Write-one-to-clear. */
+}
+
+/* Onboard RGB: active LOW; set a bit to turn that channel OFF.
+ * Preload the output latches before enabling outputs to avoid a startup flash.
+ * After init, only ControlTask writes these pins.
+ */
+static void RGB_Init(void) {
+    SIM->SCGC5 |= SIM_SCGC5_PORTD_MASK | SIM_SCGC5_PORTE_MASK;
+    GPIOE->PSOR = (1UL << BOARD_LED_RED_GPIO_PIN) | (1UL << BOARD_LED_BLUE_GPIO_PIN);
+    GPIOD->PSOR = (1UL << BOARD_LED_GREEN_GPIO_PIN);
+    PORTE->PCR[BOARD_LED_RED_GPIO_PIN] = PORT_PCR_MUX(1U);
+    PORTE->PCR[BOARD_LED_BLUE_GPIO_PIN] = PORT_PCR_MUX(1U);
+    PORTD->PCR[BOARD_LED_GREEN_GPIO_PIN] = PORT_PCR_MUX(1U);
+    GPIOE->PDDR |= (1UL << BOARD_LED_RED_GPIO_PIN) | (1UL << BOARD_LED_BLUE_GPIO_PIN);
+    GPIOD->PDDR |= (1UL << BOARD_LED_GREEN_GPIO_PIN);
+}
+
+/* TPM0 is reserved for the buzzer; RGB pins remain GPIO outputs. */
+static void Buzzer_Init(void) {
+    CLOCK_EnableClock(kCLOCK_PortD);
+    CLOCK_EnableClock(kCLOCK_Tpm0);
+    GPIOD->PCOR = 1UL << BUZZER_PIN;
+    GPIOD->PDDR |= 1UL << BUZZER_PIN;
+    PORTD->PCR[BUZZER_PIN] = PORT_PCR_MUX(1U);
+
+    /* Boot clocks already enable MCGIRCLK at 8 MHz. Preserve UART selectors. */
+    SIM->SOPT2 = (SIM->SOPT2 & ~SIM_SOPT2_TPMSRC_MASK) | SIM_SOPT2_TPMSRC(3U);
+    TPM0->SC = 0U;
+    TPM0->CNT = 0U;
+    TPM0->MOD = CLOCK_GetFreq(kCLOCK_McgInternalRefClk) / 8U / BUZZER_TONE_HZ - 1U;
+    TPM0->CONTROLS[BUZZER_CHANNEL].CnSC = TPM_CnSC_MSB_MASK | TPM_CnSC_ELSB_MASK;
+    TPM0->CONTROLS[BUZZER_CHANNEL].CnV = 0U;
+    TPM0->SC = TPM_SC_PS(3U) | TPM_SC_CMOD(1U); /* /8, edge-aligned PWM, no IRQ. */
+    PORTD->PCR[BUZZER_PIN] = PORT_PCR_MUX(4U);
+}
+
+/* Only ControlTask calls this after initialization. Zero duty is silent. */
+static void Buzzer_Set(bool on) {
+    TPM0->CONTROLS[BUZZER_CHANNEL].CnV = on ? (TPM0->MOD + 1U) / 2U : 0U;
+}
+
+static void RGB_Write(uint8_t colors) {
+    uint32_t eOn = 0U;
+    if ((colors & ALARM_LED_RED) != 0U) eOn |= 1UL << BOARD_LED_RED_GPIO_PIN;
+    if ((colors & ALARM_LED_BLUE) != 0U) eOn |= 1UL << BOARD_LED_BLUE_GPIO_PIN;
+    uint32_t eMask = (1UL << BOARD_LED_RED_GPIO_PIN) | (1UL << BOARD_LED_BLUE_GPIO_PIN);
+    GPIOE->PSOR = eMask & ~eOn;
+    GPIOE->PCOR = eOn;
+    if ((colors & ALARM_LED_GREEN) != 0U) {
+        GPIOD->PCOR = 1UL << BOARD_LED_GREEN_GPIO_PIN;
+    } else {
+        GPIOD->PSOR = 1UL << BOARD_LED_GREEN_GPIO_PIN;
+    }
+}
+
 /*
- * Reed switch GPIO interrupt.
+ * Shared Port A ISR: reed and joystick button each wake InputTask.
+ * InputTask reads both pins; the binary semaphore carries no payload.
  *
  * Keep ISR short:
  * 1. Check interrupt flag
@@ -218,14 +388,21 @@ void PORTA_IRQHandler(void) {
             (1UL << REED_PIN)
         );
 
-        if (doorSemaphore != NULL) {
+        reedInterruptCount++;
+
+        if (inputSemaphore != NULL) {
             xSemaphoreGiveFromISR(
-                doorSemaphore,
+                inputSemaphore,
                 &higherPriorityTaskWoken
             );
         }
     }
 
+    if ((flags & (1UL << JOY_BUTTON_PIN)) != 0U) {
+        PORTA->ISFR = (1UL << JOY_BUTTON_PIN);
+        buttonInterruptCount++;
+        xSemaphoreGiveFromISR(inputSemaphore, &higherPriorityTaskWoken);
+    }
     portYIELD_FROM_ISR(higherPriorityTaskWoken);
 }
 
@@ -233,24 +410,36 @@ void PORTA_IRQHandler(void) {
  * 5. PHOTORESISTOR / ADC
  * ============================================================ */
 
-static bool Light_Init(void) {
+static bool ADC_Init(void) {
     adc16_config_t adcConfig;
 
     CLOCK_EnableClock(kCLOCK_PortB);
 
-    /* Put PTB0 into analog mode. */
-    PORT_SetPinMux(
-        LIGHT_PORT,
-        LIGHT_PIN,
-        kPORT_PinDisabledOrAnalog
-    );
+    /* Configure all three ADC pins identically. Clear pull/interrupt settings
+     * as well as MUX; PORT_SetPinMux alone preserves those other PCR bits.
+     * This makes initialization deterministic, not a proven fix for a zero
+     * sensor output. Keep the shared reference used by the working joystick.
+     */
+    LIGHT_PORT->PCR[LIGHT_PIN] = PORT_PCR_MUX(0U);
+    PORTB->PCR[JOY_X_PIN] = PORT_PCR_MUX(0U);
+    PORTB->PCR[JOY_Y_PIN] = PORT_PCR_MUX(0U);
+    GPIOB->PDDR &= ~((1UL << LIGHT_PIN) | (1UL << JOY_X_PIN) | (1UL << JOY_Y_PIN));
 
     ADC16_GetDefaultConfig(&adcConfig);
+
+    /* Match Lab 2: SC2[REFSEL] = 01 selects the alternate reference.
+     * The SDK default selects VREFH/VREFL, which must not be assumed to
+     * provide the board's 3.3 V analog supply reference.
+     * Set this before initialization and calibration, for every ADC channel.
+     */
+    adcConfig.referenceVoltageSource = kADC16_ReferenceVoltageSourceValt;
 
     adcConfig.resolution =
         kADC16_ResolutionSE12Bit;
 
     adcConfig.enableContinuousConversion = false;
+    /* Allow the potentiometer output to settle at the ADC sample capacitor. */
+    adcConfig.longSampleMode = kADC16_LongSampleCycle24;
 
     ADC16_Init(LIGHT_ADC_BASE, &adcConfig);
 
@@ -267,9 +456,9 @@ static bool Light_Init(void) {
     return true;
 }
 
-static bool Light_Read(uint16_t *value) {
+static bool ADC_Read(uint8_t channel, uint16_t *value) {
     adc16_channel_config_t channelConfig = {
-        .channelNumber = LIGHT_ADC_CHANNEL,
+        .channelNumber = channel,
         .enableInterruptOnConversionCompleted = false,
         .enableDifferentialConversion = false
     };
@@ -320,6 +509,7 @@ static bool Light_Read(uint16_t *value) {
  * be validated on the actual MCXC444 board.
  */
 
+#if ENABLE_MCX_DHT
 static void DHT_SetOutput(void) {
     gpio_pin_config_t config = {
         .pinDirection = kGPIO_DigitalOutput,
@@ -466,78 +656,300 @@ static bool DHT_Read(int16_t *temperatureX10,
     return true;
 }
 
+#endif /* ENABLE_MCX_DHT */
+
 /* ============================================================
  * 7. FREERTOS TASKS
  * ============================================================ */
 
-/* ---------- Door Task ---------- */
+/* ---------- Input task: debounce reed and button outside the ISR ---------- */
 
-static void DoorTask(void *params) {
+static void InputTask(void *params) {
     (void)params;
-
-    bool previousState = Reed_IsOpen();
+    bool previousDoor = Reed_IsOpen();
+    bool previousButton = GPIO_PinRead(GPIOA, JOY_BUTTON_PIN) == 0U;
+    /* A button held at boot must be released before it can submit. */
+    bool buttonReady = !previousButton;
 
     xSemaphoreTake(dataMutex, portMAX_DELAY);
-    sensorData.doorOpen = previousState;
-    sensorData.doorValid = true;
+    sensorData.buttonPressed = previousButton;
     xSemaphoreGive(dataMutex);
 
+    InputEvent initialDoor = {
+        .type = EVENT_DOOR_CHANGED, .timestamp = xTaskGetTickCount(), .doorOpen = previousDoor
+    };
+    xQueueSend(inputQueue, &initialDoor, portMAX_DELAY);
+    EnableIRQ(PORTA_IRQn);
     for (;;) {
-        /* Sleep until an interrupt signals the semaphore. */
-        xSemaphoreTake(
-            doorSemaphore,
-            portMAX_DELAY
-        );
-
-        /* Debounce mechanical contact changes. */
-        vTaskDelay(
-            pdMS_TO_TICKS(REED_DEBOUNCE_MS)
-        );
-
-        bool currentState = Reed_IsOpen();
-
-        if (currentState != previousState) {
-            previousState = currentState;
-
+        xSemaphoreTake(inputSemaphore, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(REED_DEBOUNCE_MS));
+        bool door = Reed_IsOpen();
+        bool button = GPIO_PinRead(GPIOA, JOY_BUTTON_PIN) == 0U;
+        if (door != previousDoor) {
+            InputEvent event = {
+                .type = EVENT_DOOR_CHANGED, .timestamp = xTaskGetTickCount(), .doorOpen = door
+            };
+            xQueueSend(inputQueue, &event, portMAX_DELAY);
+        }
+        if (button != previousButton) {
             xSemaphoreTake(dataMutex, portMAX_DELAY);
-            sensorData.doorOpen = currentState;
+            sensorData.buttonPressed = button;
             xSemaphoreGive(dataMutex);
         }
+        if (!button) buttonReady = true;
+        if (button && !previousButton && buttonReady) {
+            buttonReady = false;
+            InputEvent event = {.type = EVENT_SUBMIT, .timestamp = xTaskGetTickCount()};
+            /* ControlTask drains this queue; never silently drop passcode input. */
+            xQueueSend(inputQueue, &event, portMAX_DELAY);
+        }
+        previousDoor = door;
+        previousButton = button;
     }
 }
 
-/* ---------- Light Task ---------- */
+/* ---------- ADC task: all channels share one owner ---------- */
 
-static void LightTask(void *params) {
+static void ADCTask(void *params) {
     (void)params;
-
     TickType_t lastWake = xTaskGetTickCount();
-
+    JoystickFilter filter = {0};
+    bool previouslyValid = false;
+#if ENABLE_LIGHT_SENSOR
+    unsigned lightDivider = 0U;
+    LightFilter lightFilter = {0};
+#endif
     for (;;) {
-        uint16_t adcValue = 0U;
-
-        if (Light_Read(&adcValue)) {
-            /* Relative ADC percentage, not calibrated lux. */
-            uint8_t percentage =
-                (uint8_t)(((uint32_t)adcValue * 100U)
-                          / ADC_MAX_VALUE);
-
+        uint16_t x = 0U, y = 0U;
+        bool valid = ADC_Read(JOY_X_CHANNEL, &x) && ADC_Read(JOY_Y_CHANNEL, &y);
+        JoystickDirection eventDirection = JOY_CENTER;
+        JoystickDirection position = JOY_DIAGONAL;
+        if (valid) {
+#if JOY_SWAP_AXES
+            uint16_t swap = x; x = y; y = swap;
+#endif
+#if JOY_INVERT_X
+            x = ADC_MAX_VALUE - x;
+#endif
+#if JOY_INVERT_Y
+            y = ADC_MAX_VALUE - y;
+#endif
+            position = Joystick_Classify(x, y);
+            if (GPIO_PinRead(GPIOA, JOY_BUTTON_PIN) == 0U) {
+                /* Pushing down can deflect the stick; require centre afterwards. */
+                filter = (JoystickFilter){0};
+            } else {
+                eventDirection = Joystick_Sample(&filter, x, y);
+            }
+        } else {
+            filter = (JoystickFilter){0};
+        }
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        sensorData.joystickX = x;
+        sensorData.joystickY = y;
+        sensorData.joystickValid = valid;
+        sensorData.joystickDirection = position;
+        xSemaphoreGive(dataMutex);
+        if (eventDirection != JOY_CENTER) {
+            InputEvent event = {.type = EVENT_DIRECTION, .direction = eventDirection, .timestamp = xTaskGetTickCount()};
+            xQueueSend(inputQueue, &event, portMAX_DELAY);
+        } else if (!valid && previouslyValid) {
+            InputEvent event = {.type = EVENT_INPUT_FAULT, .timestamp = xTaskGetTickCount()};
+            xQueueSend(inputQueue, &event, portMAX_DELAY);
+        }
+        previouslyValid = valid;
+#if ENABLE_LIGHT_SENSOR
+        if (++lightDivider >= LIGHT_SAMPLE_MS / ADC_SAMPLE_MS) {
+            lightDivider = 0U;
+            uint16_t raw = 0U;
+            bool lightValid = ADC_Read(LIGHT_ADC_CHANNEL, &raw);
+            /* Person 4: smooth, then map to relative brightness (0-100 %). */
+            uint16_t filtered = lightValid ? LightFilter_Update(&lightFilter, raw) : 0U;
             xSemaphoreTake(dataMutex, portMAX_DELAY);
-
-            sensorData.lightRaw = adcValue;
-            sensorData.lightPercent = percentage;
-            sensorData.lightValid = true;
-
+            sensorData.lightValid = lightValid;
+            sensorData.lightRaw = raw;
+            sensorData.lightFiltered = filtered;
+            sensorData.lightPercent = lightValid
+                ? Light_ToBrightness(filtered, LIGHT_DARK_RAW, LIGHT_BRIGHT_RAW) : 0U;
+            /* Capture ADC registers here, while this task still owns the
+             * light conversion. MonitorTask must not sample SC1 later, when
+             * it may already refer to one of the joystick channels.
+             */
+            if (lightValid) sensorData.lightSamples++;
+            else sensorData.lightReadErrors++;
+            sensorData.lightReference = (uint8_t)((ADC0->SC2 & ADC_SC2_REFSEL_MASK) >> ADC_SC2_REFSEL_SHIFT);
+            sensorData.lightSelectedChannel = (uint8_t)((ADC0->SC1[0] & ADC_SC1_ADCH_MASK) >> ADC_SC1_ADCH_SHIFT);
+            sensorData.lightPinMux = (uint8_t)((PORTB->PCR[LIGHT_PIN] & PORT_PCR_MUX_MASK) >> PORT_PCR_MUX_SHIFT);
+            sensorData.lightPullEnabled = (PORTB->PCR[LIGHT_PIN] & PORT_PCR_PE_MASK) != 0U;
             xSemaphoreGive(dataMutex);
         }
-
-        vTaskDelayUntil(
-            &lastWake,
-            pdMS_TO_TICKS(LIGHT_SAMPLE_MS)
-        );
+#endif
+        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(ADC_SAMPLE_MS));
     }
 }
 
+/* ---------- Control task: owns passcode, door state and alarm output ---------- */
+
+static void ControlTask(void *params) {
+    (void)params;
+    PasswordEntry entry = {0};
+    EntryStatus status = ENTRY_IDLE;
+    TickType_t lastInput = 0U, acceptedAt = 0U;
+    bool granted = false;
+    bool doorValid = false, doorOpen = false;
+    TickType_t lastPublish = 0;
+    Alarm alarm = {0};
+    EnvWarning env;
+    EnvWarning_Init(&env);
+    uint32_t envBeepRequests = 0U;
+    for (;;) {
+        InputEvent event;
+        bool received = xQueueReceive(inputQueue, &event, pdMS_TO_TICKS(50U)) == pdTRUE;
+        TickType_t now = xTaskGetTickCount();
+        /* Unsigned subtraction also handles scheduler tick wraparound. */
+        if (entry.length != 0U && (TickType_t)(now - lastInput) >= pdMS_TO_TICKS(ENTRY_TIMEOUT_MS)) {
+            Password_Reset(&entry);
+            status = ENTRY_EXPIRED;
+        }
+        if (granted && (TickType_t)(now - acceptedAt) >= pdMS_TO_TICKS(ACCESS_WINDOW_MS)) {
+            granted = false;
+            status = ENTRY_ACCESS_ENDED;
+        }
+        /* UART requests are applied HERE, by the existing state owner.
+         * ACK is sent only after this task has processed the request.
+         */
+        RG_Frame request;
+        if (RG_MCX_TakeRequest(&request)) {
+            uint8_t result = RG_OK;
+            RG_ESP_State esp;
+            RG_MCX_GetESP(&esp);
+            if (!esp.online || esp.session != request.session) {
+                result = RG_BUSY;
+            } else if (request.type == 'R') {
+                granted = true;
+                acceptedAt = now;
+                status = ENTRY_ACCEPTED;
+                Password_Reset(&entry);
+            } else if (request.type == 'L') {
+                if (RG_LimitsParse(request.payload, &g_rgLimits)) {
+                    g_rgLimitsConfigured = true;
+                } else {
+                    result = RG_BAD_PAYLOAD;
+                }
+            } else if (request.type == 'M') {
+                g_rgMotionEventCount++;
+                /* PERSON 1 INTEGRATION POINT:
+                 * A qualifying motion event was received exactly once in
+                 * this boot/session. Latch a security alarm here when !granted.
+                 * Continue using esp.motionValid/moving for current stability.
+                 * The existing door-only alarm below is intentionally intact.
+                 */
+            } else {
+                result = RG_UNSUPPORTED;
+            }
+            RG_MCX_Reply(&request, result);
+        }
+        if (received) {
+            if (event.type == EVENT_DOOR_CHANGED) {
+                doorValid = true;
+                doorOpen = event.doorOpen;
+            } else if (event.type == EVENT_DIRECTION) {
+                Password_Append(&entry, event.direction);
+                lastInput = event.timestamp;
+                status = entry.overflow ? ENTRY_TOO_LONG : ENTRY_TYPING;
+            } else if (event.type == EVENT_SUBMIT) {
+                /* Empty button presses do not overwrite the last result. */
+                if (entry.length != 0U) {
+                    granted = Password_Check(&entry);
+                    status = granted ? ENTRY_ACCEPTED : ENTRY_REJECTED;
+                    if (granted) acceptedAt = now;
+                    Password_Reset(&entry);
+                }
+            } else {
+                Password_Reset(&entry);
+                granted = false;
+                status = ENTRY_REJECTED;
+            }
+        }
+        uint8_t colors = Alarm_Update(&alarm, doorValid, doorOpen, granted,
+                                      (uint32_t)now, (uint32_t)pdMS_TO_TICKS(ALARM_BLINK_HALF_MS));
+        RGB_Write(colors);
+        /* Sound throughout the alarm, including the red LED's OFF phase. */
+        Buzzer_Set(alarm.state == ALARM_UNAUTHORIZED_OPEN);
+
+        /* Person 4: read ESP climate BEFORE taking dataMutex, so this task
+         * never holds two mutexes at once. RG_MCX_GetESP already marks
+         * climate invalid when the link is down or the reading is >15 s old.
+         */
+        RG_ESP_State envEsp;
+        RG_MCX_GetESP(&envEsp);
+        EnvLimits envLimits;
+        if (g_rgLimitsConfigured) {
+            envLimits = (EnvLimits){
+                g_rgLimits.tempLowX10, g_rgLimits.tempHighX10,
+                g_rgLimits.humidityLowX10, g_rgLimits.humidityHighX10,
+                g_rgLimits.lightHighPercent, g_rgLimits.exposureLimit
+            };
+        } else {
+            EnvWarning_DefaultLimits(&envLimits);
+        }
+
+        xSemaphoreTake(dataMutex, portMAX_DELAY);
+        sensorData.doorValid = doorValid;
+        sensorData.doorOpen = doorOpen;
+        sensorData.alarmState = alarm.state;
+        sensorData.entryLength = entry.length;
+        sensorData.entryStatus = status;
+        sensorData.accessGranted = granted;
+        RG_MCX_Status wire = {0};
+        wire.doorValid = doorValid;
+        wire.doorOpen = doorOpen;
+        wire.accessGranted = granted;
+        wire.accessRemainingMs = granted ? ACCESS_WINDOW_MS -
+            (uint32_t)(now - acceptedAt) * portTICK_PERIOD_MS : 0U;
+        wire.alarm = (uint8_t)alarm.state;
+        wire.lightValid = sensorData.lightValid;
+        wire.lightRaw = sensorData.lightRaw;
+        wire.lightPercent = sensorData.lightPercent;
+        /* Person 4: environmental controller. Warnings need 10 s outside a
+         * limit, clear with hysteresis, and flag stale inputs as unavailable
+         * (mask bits 6-7) rather than normal. See env_warning.h for the bits.
+         */
+        EnvInputs envIn = {
+            .climateValid = envEsp.climateValid,
+            .temperatureX10 = envEsp.temperatureX10,
+            .humidityX10 = envEsp.humidityX10,
+            .lightValid = sensorData.lightValid,
+            .brightnessPercent = sensorData.lightPercent
+        };
+        uint8_t envMask = EnvWarning_Update(&env, &envIn, &envLimits,
+                                            (uint32_t)now * portTICK_PERIOD_MS);
+        if ((env.raised & ENV_WARNING_BITS) != 0U) {
+            /* PERSON 1 INTEGRATION POINT (buzzer): a new environmental warning
+             * was raised. Play a short beep here, but only if no security
+             * alarm is active, since security alarms take priority.
+             */
+            envBeepRequests++;
+        }
+        sensorData.envMask = envMask;
+        sensorData.exposure = env.exposure;
+        sensorData.exposureValid = env.exposureValid;
+        sensorData.envLimitsFromWeb = g_rgLimitsConfigured;
+        sensorData.envLimits = envLimits;
+        sensorData.envBeepRequests = envBeepRequests;
+        wire.warningValid = true;
+        wire.warningMask = envMask;
+        wire.exposureValid = env.exposureValid;
+        wire.exposure = env.exposure;
+        xSemaphoreGive(dataMutex);
+        if ((TickType_t)(now-lastPublish) >= pdMS_TO_TICKS(500U)) {
+            RG_MCX_Publish(&wire);
+            lastPublish = now;
+        }
+    }
+}
+
+#if ENABLE_MCX_DHT
 /* ---------- Climate Task ---------- */
 
 static void ClimateTask(void *params) {
@@ -572,6 +984,8 @@ static void ClimateTask(void *params) {
     }
 }
 
+#endif /* ENABLE_MCX_DHT */
+
 /* ---------- Monitor Task ---------- */
 
 static void MonitorTask(void *params) {
@@ -590,6 +1004,8 @@ static void MonitorTask(void *params) {
         PRINTF("\r\n========== RELICGUARD ==========\r\n");
 
         /* Reed switch */
+//        PRINTF("Reed GPIO Raw: %u\r\n",
+//               (unsigned int)GPIO_PinRead(REED_GPIO, REED_PIN)); //debugging print
         if (snapshot.doorValid) {
             PRINTF(
                 "Door: %s\r\n",
@@ -599,6 +1015,30 @@ static void MonitorTask(void *params) {
             PRINTF("Door: WAITING\r\n");
         }
 
+        /* Read the physical pin independently of the interrupt/debounce
+         * path so wiring faults can be distinguished from task faults.
+         */
+        PRINTF("Reed raw PTA12: %u | IRQ count: %lu\r\n",
+               (unsigned int)GPIO_PinRead(REED_GPIO, REED_PIN),
+               (unsigned long)reedInterruptCount);
+
+        static const char *const entryNames[] = {
+            "READY", "ENTERING", "ACCEPTED", "REJECTED",
+            "ENTRY TIMED OUT", "TOO MANY DIRECTIONS - PRESS TO CLEAR", "ACCESS EXPIRED"
+        };
+        PRINTF("Joystick X: %u | Y: %u | %s | %s\r\n",
+               (unsigned)snapshot.joystickX, (unsigned)snapshot.joystickY,
+               snapshot.joystickValid ? Joystick_DirectionName(snapshot.joystickDirection) : "ADC ERROR",
+               snapshot.buttonPressed ? "PRESSED" : "RELEASED");
+        PRINTF("Button IRQ count: %lu\r\n", (unsigned long)buttonInterruptCount);
+        char masked[PASSWORD_LENGTH + 1U] = {0};
+        for (unsigned i = 0; i < snapshot.entryLength; i++) masked[i] = '*';
+        PRINTF("Passcode: [%s] %u/4 | %s\r\n", masked,
+               (unsigned)snapshot.entryLength, entryNames[snapshot.entryStatus]);
+        PRINTF("Authorization: %s\r\n", snapshot.accessGranted ? "GRANTED (30 s)" : "NOT GRANTED");
+        PRINTF("Security: %s\r\n", Alarm_StateName(snapshot.alarmState));
+
+#if ENABLE_LIGHT_SENSOR
         /* Photoresistor */
         if (snapshot.lightValid) {
             PRINTF(
@@ -608,13 +1048,22 @@ static void MonitorTask(void *params) {
             );
 
             PRINTF(
-                "Light ADC percentage: %u%%\r\n",
+                "Light raw (filtered): %u | brightness (relative): %u%%\r\n",
+                (unsigned int)snapshot.lightFiltered,
                 (unsigned int)snapshot.lightPercent
             );
         } else {
-            PRINTF("Light: WAITING\r\n");
+            PRINTF("Light: NO VALID CONVERSION\r\n");
         }
+        PRINTF("Light ADC audit: samples=%lu errors=%lu REFSEL=%u CH=%u MUX=%u PULL=%u\r\n",
+               (unsigned long)snapshot.lightSamples, (unsigned long)snapshot.lightReadErrors,
+               (unsigned)snapshot.lightReference, (unsigned)snapshot.lightSelectedChannel,
+               (unsigned)snapshot.lightPinMux, (unsigned)snapshot.lightPullEnabled);
 
+#else
+        PRINTF("Light sensor: PAUSED\r\n");
+#endif
+#if ENABLE_MCX_DHT
         /* DHT11 */
         if (snapshot.climateValid) {
             int32_t temp = snapshot.temperatureX10;
@@ -638,6 +1087,40 @@ static void MonitorTask(void *params) {
             PRINTF("DHT11: NO VALID READING\r\n");
         }
 
+#endif
+        RG_ESP_State esp;
+        RG_MCX_GetESP(&esp);
+        PRINTF("ESP link: %s | climate: %s | motion: %s\r\n",
+               esp.online ? "ONLINE" : "OFFLINE",
+               esp.climateValid ? "VALID" : "UNAVAILABLE",
+               esp.motionValid ? (esp.moving ? "MOVING" : "STATIONARY") : "UNAVAILABLE");
+        if (esp.climateValid) {
+            PRINTF("ESP temperature x10: %d | humidity x10: %u\r\n",
+                   (int)esp.temperatureX10, (unsigned)esp.humidityX10);
+        }
+        /* Person 4: environmental warnings, readable without the OLED. */
+        PRINTF("Env limits (%s): T %ld..%ld | RH %ld..%ld (x10) | light <=%ld%% | exposure %ld\r\n",
+               snapshot.envLimitsFromWeb ? "website" : "default",
+               (long)snapshot.envLimits.tempLowX10, (long)snapshot.envLimits.tempHighX10,
+               (long)snapshot.envLimits.humidityLowX10, (long)snapshot.envLimits.humidityHighX10,
+               (long)snapshot.envLimits.lightHighPercent, (long)snapshot.envLimits.exposureLimit);
+        PRINTF("Env warnings (mask 0x%02X):", (unsigned)snapshot.envMask);
+        if (snapshot.envMask == 0U) {
+            PRINTF(" NONE");
+        } else {
+            for (unsigned bit = 0U; bit < 8U; bit++) {
+                if ((snapshot.envMask & (1U << bit)) != 0U) {
+                    PRINTF(" [%s]", EnvWarning_Name((uint8_t)(1U << bit)));
+                }
+            }
+        }
+        PRINTF(" | beeps requested: %lu\r\n", (unsigned long)snapshot.envBeepRequests);
+        PRINTF("Light exposure: %s %lu percent-seconds\r\n",
+               snapshot.exposureValid ? "" : "(no valid light yet)",
+               (unsigned long)snapshot.exposure);
+        PRINTF("UART frames=%lu CRC/parse=%lu hardware=%lu txErrors=%lu\r\n",
+               (unsigned long)esp.rxFrames, (unsigned long)esp.parseErrors,
+               (unsigned long)esp.hardwareErrors, (unsigned long)esp.txErrors);
         PRINTF("================================\r\n");
 
         vTaskDelayUntil(
@@ -660,14 +1143,17 @@ int main(void) {
     BOARD_InitDebugConsole();
 #endif
 
-    PRINTF("\r\nRelicGuard Sensor Test Starting...\r\n");
+    PRINTF("\r\nRelicGuard Door Alarm + Joystick Starting...\r\n");
+    PRINTF("ADC audit 2026-10-27: light A0/PTB0, channel 8; shared REFSEL=1.\r\n");
+    PRINTF("Return to centre between directions; press the stick to submit.\r\n");
 
     /* Create synchronization objects. */
-    doorSemaphore = xSemaphoreCreateBinary();
+    inputSemaphore = xSemaphoreCreateBinary();
     dataMutex = xSemaphoreCreateMutex();
+    inputQueue = xQueueCreate(INPUT_QUEUE_LENGTH, sizeof(InputEvent));
 
-    if ((doorSemaphore == NULL) ||
-        (dataMutex == NULL)) {
+    if ((inputSemaphore == NULL) ||
+        (dataMutex == NULL) || (inputQueue == NULL)) {
         PRINTF("ERROR: Semaphore/Mutex creation failed\r\n");
 
         for (;;) {
@@ -675,61 +1161,40 @@ int main(void) {
     }
 
     /* Initialize hardware. */
+    DisableIRQ(PORTA_IRQn);
     Reed_Init();
+    JoystickButton_Init();
+    RGB_Init();
+    Buzzer_Init();
 
-    if (!Light_Init()) {
+    if (!ADC_Init()) {
         PRINTF("ERROR: ADC calibration failed\r\n");
 
         for (;;) {
         }
     }
 
+#if ENABLE_MCX_DHT
     DHT_Init();
+#endif
 
-    /* Create FreeRTOS tasks. */
-    BaseType_t result = pdPASS;
+    if (!RG_MCX_Init()) {
+        PRINTF("ERROR: UART initialization/allocation failed\r\n");
+        for (;;) {}
+    }
 
-    result &= xTaskCreate(
-        DoorTask,
-        "Door",
-        DOOR_STACK_SIZE,
-        NULL,
-        DOOR_TASK_PRIORITY,
-        NULL
-    );
-
-    result &= xTaskCreate(
-        LightTask,
-        "Light",
-        LIGHT_STACK_SIZE,
-        NULL,
-        LIGHT_TASK_PRIORITY,
-        NULL
-    );
-
-    result &= xTaskCreate(
-        ClimateTask,
-        "Climate",
-        CLIMATE_STACK_SIZE,
-        NULL,
-        CLIMATE_TASK_PRIORITY,
-        NULL
-    );
-
-    result &= xTaskCreate(
-        MonitorTask,
-        "Monitor",
-        MONITOR_STACK_SIZE,
-        NULL,
-        MONITOR_TASK_PRIORITY,
-        NULL
-    );
-
-    if (result != pdPASS) {
+    /* Compare each result explicitly: bitwise &= can hide allocation failures. */
+    if (xTaskCreate(RG_MCX_Task, "UART", 512U, NULL, 2U, NULL) != pdPASS ||
+        xTaskCreate(InputTask, "Input", INPUT_STACK_SIZE, NULL, INPUT_TASK_PRIORITY, NULL) != pdPASS ||
+        xTaskCreate(ADCTask, "ADC", ADC_STACK_SIZE, NULL, ADC_TASK_PRIORITY, NULL) != pdPASS ||
+        xTaskCreate(ControlTask, "Control", CONTROL_STACK_SIZE, NULL, CONTROL_TASK_PRIORITY, NULL) != pdPASS ||
+        xTaskCreate(MonitorTask, "Monitor", MONITOR_STACK_SIZE, NULL, MONITOR_TASK_PRIORITY, NULL) != pdPASS
+#if ENABLE_MCX_DHT
+        || xTaskCreate(ClimateTask, "Climate", CLIMATE_STACK_SIZE, NULL, CLIMATE_TASK_PRIORITY, NULL) != pdPASS
+#endif
+    ) {
         PRINTF("ERROR: Task creation failed\r\n");
-
-        for (;;) {
-        }
+        for (;;) {}
     }
 
     PRINTF("Starting FreeRTOS Scheduler...\r\n");
