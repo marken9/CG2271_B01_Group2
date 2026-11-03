@@ -1,107 +1,68 @@
 # RelicGuard interface system
 
 Implementation: `dashboard/public/` (vanilla HTML/CSS/JS, served by `dashboard/server.js`).
-Chosen direction: `design-demos/dir-4.html`. Its layout comes from Direction 1 (bedside
-monitor) and its colours from Direction 2 (e-ink device face); see
-`design-demos/direction-approved.md`.
+Chosen direction: the "data terminal" prototype, `design-demos/taste/terminal.html`
+(design-taste-frontend app style `data-terminal`, seed 966987889), with a light theme added.
 
 ## Direction
 
-A bedside patient monitor printed on e-ink. Every reading is a row: a 6-hour trend on the
-left, and a large numeric with its limits on the right. Alarms run in a band across the top,
-coloured by priority. Controls are keys along the bottom. The page is paper and ink, and
-colour appears only when something needs attention or confirms the case is sealed.
+A monitoring screen left running on the bench. One time axis runs down the left panel: the
+lid lane, then the temperature, humidity and light tracks, all on the same x scale, so an
+event lines up with its effect (the lid opens, light jumps). Every figure is in IBM Plex Mono
+so digits stack; text is Public Sans. Colour goes on data and status only.
 
-- **Never healthy by default.**
-  - Data that isn't current shows **hollow ghost digits**, reads "Last known · not current",
-    and has a grey trace.
-  - Missing readings show "-?-" in a dashed outline.
-  - Lid and laser read "Unknown" with their last known state.
-- **Acknowledging never hides anything.** Acknowledged alarms change from filled to
-  outlined ("Ack HH:MM · still active") and stay until live data clears them.
-- **Status is never colour alone.** Every alarm and status has an icon and text.
+- **The finding comes first.** The line under the title says what matters now ("Lid open
+  since 12:12", "Humidity above 55 % RH since 14:40", "No data since 14:41").
+- **Never healthy by default.** Data that isn't current turns grey and reads "Last known · not
+  current"; missing readings show "—"; the lid reads "Unknown" with its last known state; a gap
+  in the feed is hatched on every lane.
+- **Lid open is unmissable.** The lid's label cell gets a red border and a red wash, the word
+  and its "Open for 2m 05s" counter turn red, and the lane shows a red block.
+- **Acknowledging never hides anything.** Acknowledged alarms stay listed ("Acknowledged 12:14 ·
+  stays until it clears") until live data clears them.
+- **Status is never colour alone.** Every state also has words.
 
-## Composition (top to bottom)
+## Composition
 
-1. **Top bar:** "RelicGuard Card Showcase", then the feed status (LIVE / STALE / DISCONNECTED,
-   Updated or Last data, the time, and the age). It is closed by a 2px ink rule.
-2. **Alarm band:** one block per active alert, ordered breach → feed → caution → fault.
-   When nothing is active it shows "No active alarms · All readings within demo limits".
-3. **Parameter rows (×3):** the trace column holds the label and a 6-hour trend with dashed
-   limit lines. The numeric column (400px, 2px ink rule on its left) holds the value, the
-   upper/lower limits and a status line.
-4. **Lower band:** the Lid and Laser beam security cells, then the 3 most recent events.
-5. **Keys:** Acknowledge (n), History, Thresholds, and the demo-data note with the demo state picker.
+1. **Icon rail (55px):** the mark, Overview, History (opens the history dialog with the full
+   event log), Limits (opens thresholds), and the theme toggle at the bottom. The current item
+   is marked by a 1px accent line on the rail's edge. On a phone it becomes a bottom bar with
+   short labels.
+2. **Title row:** "RelicGuard · CG2271 B01 Group 2", the h1 "Card Showcase" (plus a "Demo data"
+   tag in demo mode), the finding line; on the right the Data picker, the feed (dot, Live /
+   Stale / Disconnected, last sample time) and Acknowledge as an inverted pill (quiet and
+   aria-disabled when there is nothing to acknowledge).
+3. **Lid and Climate panel:** a 196px label column (name and limits, the value in mono, a status
+   note) beside each plot. The lid lane is a green track with red blocks for openings, labelled
+   with time and duration; labels that would collide fall back to the time or are dropped.
+   Tracks: a 2px line (red when out of limits, grey when stale), the safe band between the
+   limits in a faint green, the limits dashed, round ticks on a 40px lane at the right. Hour
+   labels run underneath.
+4. **Right column (400px):** Alarms (rows, then lid-open time and count over the last 6 h),
+   Recent Events (5 rows, "All events (n)" opens History), Sensors (DHT11, photoresistor, reed
+   switch, ESP32 uplink, each with its state).
 
-Responsive behaviour:
-- **Short laptop screens (≤820px tall):** rows tighten so everything fits in one screen.
-- **Under 900px wide:** each row stacks as label → numeric → trend, and the lower band
-  becomes 2 + 1 columns.
-- **Under 520px wide:** everything is a single column, and Acknowledge spans the full width.
+## Tokens
 
-## Tokens (`styles.css :root`)
+Dark (default) and light share names; `<html data-theme>` picks the set. The choice is saved in
+`localStorage` under `relicguard.theme` and set before first paint; without a saved choice the
+system preference decides.
 
-| Role | Token | Value |
+| Role | Dark | Light |
 |---|---|---|
-| Page | `--paper` | #E8E7E1 |
-| Fills (no-alarm band, key bar, trace gaps) | `--paper-2` | #DEDDD6 |
-| Inputs, chart limits band | `--paper-3` | #F2F1EC |
-| Ink, 3 tiers | `--ink` / `--ink-2` / `--ink-3` | #141414 / #45443F / #5F5E58 |
-| Not-current ghost | `--ghost` | #8E8D86 (decorative or large text only) |
-| Hairline, limit lines | `--hair` / `--limit` | #C8C7BF / #9D9C94 |
-| Secure (lid closed, no tampering, live dot) | `--secure` | #178A3E |
-| Breach (high priority) | `--breach`, `--breach-wash` | #B3261E |
-| Caution (medium priority) | `--caution` text, `--caution-fill`, `--caution-wash` | #9A4C05 / #C77A1C |
+| Ground / surface / raised | #171719 / #131217 / #212023 | #f4f4f5 / #ffffff / #efeff1 |
+| Text / muted | #ffffff / #8a8c92 | #111113 / #5f6168 |
+| Accent (selection only) | #4a8ad6 | #2f6fbf |
+| Positive (closed lid, safe band) | #44a282 | #1e7b4f |
+| Negative (lid open, out of limits) | #e5566f | #c4242a |
+| Warning (feed, stale) | #d9a441 | #92400e |
+| Data line | #f2f2f3 | #111113 |
 
-Alarm priorities follow patient-monitor conventions:
+Panels: 6px radius; dark panels have a soft shadow and no border, light panels a 1px edge and no
+shadow. One 24px gap everywhere. Type: title 26/600, panel titles 16/600, body 13 (14 on a phone),
+labels 12; figures 20px mono.
 
-| Priority | Severity | Covers | Treatment |
-|---|---|---|---|
-| **High** | `breach` | lid open, beam tripped | filled red, white text |
-| **Medium** | `caution` | out of limits, feed stale or offline | filled amber, ink text |
-| **Technical** | `fault` | missing reading, unknown lid or beam state | paper fill, 2px dashed ink outline |
-| **Acknowledged** | (high or medium) | any acknowledged alarm | a wash of its colour plus an outline |
+## Removed
 
-## Type
-
-Barlow for text and Barlow Semi Condensed for figures, with tabular numerals.
-
-| Role | Spec |
-|---|---|
-| Numeric value | `clamp(56px, min(7.2vw, 11.5dvh), 104px)` / 600 |
-| Unit | 22 / 600 / ink-2 |
-| Security state | 36 / 600, uppercase (30 on short screens, 28 under 900px) |
-| Parameter and section labels | 14–15 / 600, uppercase, 0.04em |
-| Alarm text | 16 / 600 |
-| Body, meta | 14–15 |
-| Smallest label | 12 (limit "upper/lower", trace limit tags) |
-
-## Components
-
-- **Trace:** an SVG with a 1000×100 `viewBox` and `preserveAspectRatio="none"`, so it
-  stretches to fill the row; lines use `vector-effect: non-scaling-stroke`.
-  - The line is 2px ink, or ghost grey when not current.
-  - Limits are 1px dashed `--limit` lines, labelled with HTML tags (so the text doesn't stretch).
-  - A trailing gap with no data is shaded `--paper-2`, with "No signal" when a sensor is missing.
-- **Numeric block:** the value and unit, the limits column (upper over lower), and a status
-  line ("Within limits", "High · above 55 since …", "No valid reading since …" or
-  "Last known · not current").
-  - Out of limits: a caution wash with a 3px inset `--caution-fill` border.
-  - Missing reading: a 2px dashed outline.
-- **Security cell:** an uppercase label and a 30px icon with the state (green when secure).
-  A breach gets a red wash and a 3px inset red border; an unknown state shows
-  "Last known: …" underneath.
-- **Keys:** at least 44px tall (40px on short screens), with a 2px ink border and 6px radius.
-  - Acknowledge is filled amber while there are open alarms. Otherwise it uses
-    `aria-disabled`, not `disabled`, so focus stays on it.
-  - Pressing it acknowledges every open alarm and logs one event each.
-- **Dialogs:** paper background, 2px ink border, 8px radius. The primary button is
-  ink-filled. History charts use an ink line, a paper-3 limits band and dashed limit edges.
-
-## Behaviour rules
-
-- Feed state: `live` while a sample is under 10 s old; `stale` once older; `offline` when
-  the board reports disconnected or nothing has arrived yet.
-- Limit checks only run on live data. Alerts clear only on live evidence. While the feed is
-  down, existing alerts stay and are marked "unconfirmed".
-- Thresholds are stored in localStorage and labelled as demo values everywhere.
+The laser tripwire was removed from the dashboard, the server and the ESP32 sketch. The server
+ignores a `laserInterrupted` field if one is still sent.

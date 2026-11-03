@@ -11,7 +11,6 @@
  *     humidity: number | null,     // % RH    (humidityX10 / 10, null if !climateValid)
  *     light: number | null,        // lux     (null if !lightValid)
  *     lidOpen: boolean | null,     // reed switch (null if !doorValid)
- *     laserInterrupted: boolean | null,
  *   }
  *
  * A live source only needs to call onSample() with the same shape.
@@ -21,7 +20,6 @@ export const DEMO_SCENARIOS = {
   normal: { label: "Normal" },
   humidity: { label: "Humidity out of range" },
   lid: { label: "Lid open" },
-  laser: { label: "Laser beam tripped" },
   offline: { label: "Disconnected" },
 };
 
@@ -30,14 +28,12 @@ const BASELINE = {
   humidity: 47.2,
   light: 38,
   lidOpen: false,
-  laserInterrupted: false,
 };
 
 const TARGETS = {
   normal: {},
   humidity: { humidity: 63.5 },
   lid: { lidOpen: true, light: 96 },
-  laser: { laserInterrupted: true },
   offline: {},
 };
 
@@ -72,7 +68,6 @@ export function createDemoSource({ scenario = "normal", intervalMs = 2000, onSam
       receivedAt: now,
       connected: true,
       lidOpen: target.lidOpen,
-      laserInterrupted: target.laserInterrupted,
     };
 
     for (const metric of Object.keys(JITTER)) {

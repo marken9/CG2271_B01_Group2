@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Showcase · RelicGuard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* Achromatic ledger. Face: a mount-board ground from the showcase's world; the one chart hue on the
+ * readings' lines. Grid: canvas 1440 − 240 sidebar − 8 − 32 = 1160, three columns
+ * 3 × 378.67 + 2 × 12 = 1160; the seal and the events span two (769.33), alarms and sensors one. */
+:root {
+  --ground: #f3f2ef;
+  --surface: #ffffff;
+  --raised: #eeeeee;
+  --active: #e6e5e1;
+  --border: #e6e6e6;
+  --rule: #f0f0f0;
+  --control: #d4d4d4;
+  --text: #0a0a0a;
+  --muted: #6b6b6b;
+  --primary: #141414;
+  --positive: #2e7d32;
+  --negative: #c4242a;
+  --warning: #92400e;
+  --chart-1: #1d5fbf;
+  --chart-muted: #8a8a8a;
+  --grid: #ececec;
+  --axis-ink: #6b6b6b;
+  --ink: #0a0a0a;
+  --seal-track: #0a0a0a;
+  --pill-positive-bg: #dcfae5; --pill-positive-ink: #04250e;
+  --pill-negative-bg: #ffedea; --pill-negative-ink: #831c1e;
+  --pill-warning-bg: #fffbeb; --pill-warning-ink: #92400e;
+  --pill-neutral-bg: #eeeeee; --pill-neutral-ink: #3d3d3d;
+  --radius-card: 8px;
+  --radius-control: 6px;
+  --gap: 12px;
+  --pad: 32px;
+  --card-pad: 20px;
+  --font: "Geist", Inter, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--ground); color: var(--text); font: 400 14px/20px var(--font); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p, ol, ul, dl, dd { margin: 0; }
+ol, ul { padding: 0; list-style: none; }
+.num { font-variant-numeric: tabular-nums; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+.app { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100dvh; }
+
+/* Sidebar on the page ground */
+.side { display: flex; flex-direction: column; gap: 24px; padding: 20px 12px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px; font-weight: 500; font-size: 15px; }
+.brand svg { width: 22px; height: 22px; }
+.scope { padding: 8px; border-radius: var(--radius-control); background: var(--surface); border: 1px solid var(--border); }
+.scope b { display: block; font-weight: 500; }
+.scope span { color: var(--muted); font-size: 12px; }
+.nav a { display: flex; align-items: center; gap: 10px; height: 32px; margin-bottom: 2px; padding: 0 10px; border-radius: var(--radius-control); color: var(--muted); text-decoration: none; }
+.nav a svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.nav a:hover { color: var(--text); }
+.nav a[aria-current] { background: var(--active); color: var(--text); }
+.side-foot { margin-top: auto; padding: 0 10px; color: var(--muted); font-size: 12px; line-height: 18px; }
+.side-foot b { color: var(--text); font-weight: 500; }
+
+/* Canvas */
+.canvas { padding: 28px var(--pad) var(--pad) 8px; display: grid; gap: var(--gap); align-content: start; }
+.title-row { display: flex; align-items: flex-start; gap: 16px; padding: 0 0 12px; }
+.title-row h1 { font-size: 24px; line-height: 32px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.title-row p { color: var(--muted); margin-top: 4px; }
+.title-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.stamp { color: var(--muted); font-size: 13px; }
+.btn { height: 36px; padding: 0 14px; border: 0; border-radius: var(--radius-control); background: var(--raised); cursor: pointer; font-weight: 500; transition: transform 120ms; }
+.btn:active { transform: scale(.97); }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: #2a2a2a; }
+.btn:not(.btn-primary):hover { background: #e5e5e5; }
+
+.pill { flex: none; display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.pill[data-tone="positive"] { background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
+.pill[data-tone="negative"] { background: var(--pill-negative-bg); color: var(--pill-negative-ink); }
+.pill[data-tone="warning"] { background: var(--pill-warning-bg); color: var(--pill-warning-ink); }
+.pill[data-tone="neutral"] { background: var(--pill-neutral-bg); color: var(--pill-neutral-ink); }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); padding: var(--card-pad); min-width: 0; }
+.card-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.card-head h2 { font-size: 16px; line-height: 24px; font-weight: 500; }
+.card-head .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); }
+.span-2 { grid-column: span 2; }
+.stack { display: flex; flex-direction: column; }
+#alarm-action:not(:empty) { margin: -8px 0 -8px 0; }
+
+/* Seal: the two states, then the timeline */
+.seal-states { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 18px; }
+.seal-state dt { color: var(--muted); font-size: 13px; }
+.seal-state dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; }
+.seal-state .word { font-size: 34px; line-height: 40px; font-weight: 500; letter-spacing: -0.01em; }
+.seal-state .sub { color: var(--muted); font-size: 13px; }
+.seal-state[data-tone="negative"] .word { color: var(--negative); }
+.seal-state[data-tone="unknown"] .word { color: var(--muted); }
+
+/* Climate */
+.figure { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.figure .v { font-size: 30px; line-height: 36px; font-weight: 500; letter-spacing: -0.01em; }
+.figure .u { color: var(--muted); font-size: 14px; }
+.reading-line { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.climate .card[data-tone="negative"] .v { color: var(--negative); }
+.climate .card[data-tone="unknown"] .v { color: var(--muted); }
+
+/* Lists */
+.rows li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 44px; border-top: 1px solid var(--rule); }
+.rows li:first-child { border-top: 0; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--chart-muted); }
+.dot[data-kind="breach"] { background: var(--negative); }
+.dot[data-kind="caution"] { background: #b26a00; }
+.rows .main { display: flex; flex-direction: column; }
+.rows .main small { color: var(--muted); font-size: 12px; line-height: 16px; }
+.rows time, .rows .state { color: var(--muted); text-align: right; font-size: 13px; }
+.rows .state[data-tone="warning"] { color: var(--warning); }
+.sensors li { grid-template-columns: minmax(0, 1fr) auto; }
+.calm-note { color: var(--muted); }
+.well { margin-top: 16px; padding: 4px 12px; border-radius: var(--radius-card); background: var(--raised); }
+.well div { display: flex; justify-content: space-between; gap: 12px; height: 32px; align-items: center; }
+.well dt { color: var(--muted); }
+.well dd span { color: var(--muted); }
+.calm-note b { display: block; color: var(--text); font-weight: 500; margin-bottom: 4px; }
+.empty { padding: 12px; border: 1px dashed var(--control); border-radius: var(--radius-card); color: var(--muted); }
+.link { margin-left: auto; color: var(--text); font-size: 13px; font-weight: 500; text-decoration: none; }
+.link:hover { text-decoration: underline; }
+
+.menu-btn { display: none; }
+
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 1fr; }
+  .side { flex-direction: row; align-items: center; height: 52px; padding: 0 16px; }
+  .side .scope, .side .nav, .side-foot { display: none; }
+  .menu-btn { display: inline-grid; place-items: center; margin-left: auto; width: 44px; height: 44px; border: 0; background: none; }
+  .canvas { padding: 8px 16px 24px; }
+}
+@media (max-width: 760px) {
+  .title-row { flex-wrap: wrap; }
+  .title-actions { margin-left: 0; width: 100%; justify-content: space-between; }
+  .grid { grid-template-columns: 1fr; }
+  .span-2 { grid-column: auto; }
+  .seal-state .word, .figure .v { font-size: 26px; }
+}
+@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 7h18" stroke="#1d5fbf" stroke-width="2.4"/><path d="M6 13.5h12" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2"/></svg>
+      <span translate="no">RelicGuard</span>
+    </div>
+    <div class="scope"><b>Card Showcase</b><span>Bench 2 · CG2271 Group 2</span></div>
+    <nav class="nav" aria-label="Screens">
+      <a href="#" aria-current="page"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4z"/></svg>Overview</a>
+      <a href="#history"><svg viewBox="0 0 24 24"><path d="M4 18 9 12l4 3 7-9"/></svg>History</a>
+      <a href="#events"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>Event log</a>
+      <a href="#thresholds"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Limits</a>
+    </nav>
+    <p class="side-foot" id="side-feed"></p>
+    <button class="menu-btn" type="button" aria-label="Open menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  </aside>
+
+  <main class="canvas">
+    <header class="title-row">
+      <div>
+        <h1>Card Showcase <span class="pill" id="status"></span></h1>
+        <p id="finding"></p>
+      </div>
+      <div class="title-actions">
+        <span class="stamp num" id="stamp"></span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="card span-2" aria-labelledby="seal-title">
+        <div class="card-head"><h2 id="seal-title">Seal</h2><span class="meta">Last 6 hours</span></div>
+        <dl class="seal-states">
+          <div class="seal-state" id="lid"><dt>Lid · reed switch</dt><dd><span class="word"></span><span class="sub num"></span></dd></div>
+          <div class="seal-state" id="beam"><dt>Laser beam</dt><dd><span class="word"></span><span class="sub num"></span></dd></div>
+        </dl>
+        <div id="seal-strip"></div>
+      </section>
+      <section class="card stack" aria-labelledby="alarms-title">
+        <div class="card-head"><h2 id="alarms-title">Active alarms</h2><span class="meta" id="alarm-count"></span><span id="alarm-action"></span></div>
+        <div id="alarms"></div>
+      </section>
+
+      <article class="card" data-metric="temperature"></article>
+      <article class="card" data-metric="humidity"></article>
+      <article class="card" data-metric="light"></article>
+
+      <section class="card span-2" aria-labelledby="events-title">
+        <div class="card-head"><h2 id="events-title">Today’s events</h2><a class="link" href="#events" id="events-all"></a></div>
+        <ol class="rows" id="events"></ol>
+      </section>
+      <section class="card" aria-labelledby="sensors-title">
+        <div class="card-head"><h2 id="sensors-title">Sensors</h2><span class="meta">Readings every 2 s</span></div>
+        <ul class="rows sensors" id="sensors"></ul>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script src="data.js"></script>
+<script src="charts.js"></script>
+<script src="seal.js"></script>
+<script>
+const { data: d, fmt, view } = RG;
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+function renderHeader() {
+  const status = view.status(d);
+  Object.assign($("#status"), { textContent: status.text }).dataset.tone = status.tone;
+  $("#finding").textContent = view.finding(d);
+  const feed = view.feed(d);
+  $("#stamp").textContent = feed.sub;
+  $("#side-feed").innerHTML = `<b>${feed.text}</b> · ${esc(feed.sub)}<br>Readings every 2 s`;
+}
+
+function renderSeal() {
+  const seal = view.seal(d);
+  for (const key of ["lid", "beam"]) {
+    const el = $(`#${key}`);
+    el.dataset.tone = seal[key].tone;
+    $(".word", el).textContent = seal[key].text;
+    $(".sub", el).textContent = seal[key].sub;
+  }
+  Seal.draw($("#seal-strip"), d);
+}
+
+/* Fixed round ticks around each limit band, so a steady reading isn't a flat line on zero. */
+const TICKS = { temperature: [16, 20, 24, 28], humidity: [30, 40, 50, 60, 70], light: [0, 50, 100, 150, 200] };
+
+function renderClimate() {
+  const labels = d.history.temperature.map((p) => fmt.time(p.t));
+  for (const card of document.querySelectorAll(".card[data-metric]")) {
+    const metric = card.dataset.metric, meta = d.metrics[metric], lim = d.limits[metric];
+    const status = view.reading(d, metric);
+    card.dataset.tone = status.tone;
+    card.innerHTML = `
+      <div class="card-head"><h2>${meta.label}</h2><span class="meta num">Limits ${lim.min}–${lim.max} ${meta.unit}</span></div>
+      <p class="figure num"><span class="v">${fmt.value(metric, d.reading[metric])}</span><span class="u">${meta.unit}</span></p>
+      <p class="reading-line">${status.tone === "neutral" ? status.text : `<span class="pill" data-tone="${status.tone === "unknown" ? "warning" : status.tone}">${status.text}</span>`}</p>
+      <div class="chart"></div>`;
+    const refs = [{ value: lim.max, label: `${lim.max}` }];
+    if (lim.min > 0) refs.push({ value: lim.min, label: `${lim.min}` });
+    Charts.line($(".chart", card), {
+      labels,
+      series: [{ name: meta.label, values: d.history[metric].map((p) => p.v) }],
+      format: Charts.fmt.dec(meta.decimals),
+      height: 132,
+      yTicks: TICKS[metric],
+      tickFormat: Charts.fmt.int,
+      reference: refs,
+      xAt: d.evenHours,
+    });
+  }
+}
+
+function renderAlarms() {
+  const open = d.alarms.filter((a) => !a.acked).length;
+  $("#alarm-count").textContent = d.alarms.length ? `${d.alarms.length} open` : "";
+  if (!d.alarms.length) {
+    /* Nothing open: show the last alarm that cleared, so the card still answers "when was it last unsafe?" */
+    const last = d.lastLid;
+    $("#alarms").innerHTML = `<p class="calm-note"><b>None open</b>Last alarm: lid opened ${fmt.time(last.from)}, closed after ${fmt.duration(last.to - last.from)}.</p>${todayWell()}`;
+    $("#alarm-action").innerHTML = "";
+    return;
+  }
+  $("#alarms").innerHTML = `<ul class="rows alarm-rows">${d.alarms.map((a) => `<li><span class="dot" data-kind="${a.severity}"></span><span class="main">${esc(a.title)}<small>${a.acked ? "Acknowledged · stays until it clears" : "Not acknowledged"}</small></span><time class="num">since ${fmt.time(a.since)}</time></li>`).join("")}</ul>${todayWell()}`;
+  $("#alarm-action").innerHTML = open ? `<button class="btn btn-primary" type="button" id="ack">Acknowledge ${open}</button>` : "";
+  $("#ack")?.addEventListener("click", acknowledge);
+}
+
+/* Today's exposure as a key-value well: how long the cards were at risk. */
+function todayWell() {
+  const t = d.today;
+  return `<dl class="well num">
+    <div><dt>Lid open today</dt><dd>${fmt.duration(t.lidOpenMs)} <span>(${t.lidOpens}×)</span></dd></div>
+    <div><dt>Beam trips today</dt><dd>${t.beamTrips}</dd></div>
+    <div><dt>Out of limits today</dt><dd>${t.outOfLimitsMs ? fmt.duration(t.outOfLimitsMs) : "0 m"}</dd></div>
+  </dl>`;
+}
+
+function acknowledge() {
+  for (const a of d.alarms) if (!a.acked) { a.acked = true; d.events.unshift({ at: d.now, kind: "ack", text: `Acknowledged: ${a.title.toLowerCase()}` }); }
+  renderAlarms();
+  renderLists();
+}
+
+function renderLists() {
+  $("#sensors").innerHTML = view.sensors(d).map((x) => `<li><span class="main">${x.name}<small>${x.role}</small></span><span class="state" data-tone="${x.tone}">${x.state}</span></li>`).join("");
+  const shown = d.events.slice(0, 4); // as many rows as the sensors card beside it
+  $("#events-all").textContent = `View all ${d.events.length}`;
+  $("#events").innerHTML = shown.map((e) => `<li><span class="dot" data-kind="${e.kind}"></span><span class="main">${esc(e.text)}</span><time class="num">${fmt.time(e.at)}</time></li>`).join("");
+}
+
+renderHeader();
+renderSeal();
+renderAlarms();
+renderClimate();
+renderLists();
+</script>
+</body>
+</html>

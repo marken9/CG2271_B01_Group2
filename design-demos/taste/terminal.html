@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en-GB" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Showcase · RelicGuard</title>
+<meta name="theme-color" content="#171719">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Data terminal. Face: every figure in IBM Plex Mono, digits that stack on a screen left running on
+ * the bench. One time axis runs down the left column: the lid and beam lanes, then the three climate
+ * tracks, all on the same x scale, so an event lines up with its effect (the lid opens, light jumps).
+ * Grid: 1440 − 55 rail − 2 × 32 pad = 1321; columns 1fr 400px with a 24px gap: 897 + 24 + 400. */
+:root {
+  color-scheme: dark;
+  --ground: #171719;
+  --surface: #131217;
+  --raised: #212023;
+  --border: #222224;
+  --rule: #1b1a1f;
+  --control: #3a3a3e;
+  --text: #ffffff;
+  --muted: #8a8c92;
+  --accent: #4a8ad6;
+  --positive: #44a282;
+  --negative: #e5566f;
+  --warning: #d9a441;
+  --grid: #2a292e;
+  --seal-track: #44a282; /* the seal itself is the main data: closed reads as the secure green */
+  --pill-positive-bg: #1b2828; --pill-positive-ink: #5fc39c;
+  --pill-negative-bg: #2c1a20; --pill-negative-ink: #e5566f;
+  --pill-warning-bg: #2a2416; --pill-warning-ink: #d9a441;
+  --pill-neutral-bg: #212023; --pill-neutral-ink: #bdbdc0;
+  --shadow: 0 12px 28px rgba(0,0,0,.2);
+  --radius-card: 6px;
+  --gap: 24px;
+  --pad: 32px;
+  --font: "Public Sans", Inter, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--ground); color: var(--text); font: 400 13px/20px var(--font); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p, ol, ul, dl, dd { margin: 0; }
+ol, ul { padding: 0; list-style: none; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+/* The style's decision: every figure in the mono face. */
+.fig { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.app { display: grid; grid-template-columns: 55px minmax(0, 1fr); min-height: 100dvh; }
+
+/* Icon rail */
+.rail { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 0; border-right: 1px solid var(--border); }
+.rail .mark { width: 26px; height: 26px; margin-bottom: 18px; }
+.rail a { position: relative; display: grid; place-items: center; width: 55px; height: 42px; color: var(--muted); text-decoration: none; }
+.rail a:hover { color: var(--text); }
+.rail a svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.rail a[aria-current] { color: var(--text); }
+/* The move: the selection is a 1px accent line on the nearest edge. */
+.rail a[aria-current]::after { content: ""; position: absolute; right: -1px; top: 10px; bottom: 10px; width: 1px; background: var(--accent); }
+.rail .foot { margin-top: auto; }
+
+.canvas { padding: 24px var(--pad) var(--pad); min-width: 0; }
+.title-row { display: flex; align-items: flex-end; gap: 24px; margin-bottom: 24px; }
+.title-row h1 { font-size: 26px; line-height: 32px; font-weight: 600; letter-spacing: -0.01em; }
+.title-row p { margin-top: 6px; color: var(--muted); font-size: 14px; }
+.title-row .crumb { margin: 0 0 4px; font-size: 12px; }
+.title-row p b { color: var(--text); font-weight: 500; }
+.title-actions { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+.range { display: flex; gap: 16px; }
+.range button { position: relative; height: 34px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.range button:hover { color: var(--text); }
+.range button[aria-pressed="true"] { color: var(--text); }
+.range button[aria-pressed="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: 2px; height: 1px; background: var(--accent); }
+.feed { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.feed i { width: 7px; height: 7px; border-radius: 50%; background: var(--positive); }
+.feed[data-tone="warning"] i { background: none; box-shadow: inset 0 0 0 1.5px var(--warning); }
+.btn-invert { height: 34px; padding: 0 16px; border: 0; border-radius: 999px; background: #fff; color: #000; font-weight: 600; cursor: pointer; transition: transform 120ms; }
+.btn-invert:hover { background: #e6e6e6; }
+.btn-invert:active { transform: scale(.97); }
+
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: var(--gap); align-items: start; }
+.panel { background: var(--surface); border-radius: var(--radius-card); box-shadow: var(--shadow); padding: 20px 24px; min-width: 0; }
+.panel h2 { font-size: 16px; line-height: 24px; font-weight: 600; }
+.panel-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.panel-head .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+/* The time axis: one row per lane, a fixed 196px label column, the plot on the shared x scale. */
+.lanes { display: grid; grid-template-columns: 196px minmax(0, 1fr); }
+.lane-label { padding: 10px 16px 10px 0; border-top: 1px solid var(--rule); }
+.lane-plot { border-top: 1px solid var(--rule); padding: 10px 0; min-width: 0; }
+.lanes > :nth-child(-n + 2) { border-top: 0; }
+.lane-label .name { color: var(--muted); font-size: 12px; }
+.lane-label .value { display: flex; align-items: baseline; gap: 6px; font-size: 20px; line-height: 28px; white-space: nowrap; }
+.lane-label .value small { color: var(--muted); font-size: 12px; font-family: var(--font); }
+.lane-label .note { color: var(--muted); font-size: 12px; }
+.lane-label[data-tone="negative"] .value, .lane-label[data-tone="negative"] .note { color: var(--negative); }
+.lane-label[data-tone="unknown"] .value { color: var(--muted); }
+.seal-word { font-size: 20px; line-height: 28px; font-weight: 600; }
+.seal-word[data-tone="negative"] { color: var(--negative); }
+.seal-word[data-tone="unknown"] { color: var(--muted); }
+.axis-row { color: var(--muted); }
+.seal-plot { display: flex; align-items: center; }
+.seal-plot svg { flex: 1; }
+
+/* Right column */
+.side-stack { display: grid; gap: var(--gap); }
+.list li { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; padding: 4px 0; min-height: 28px; align-items: baseline; }
+.list time { color: var(--muted); }
+.list .breach { color: var(--negative); }
+.list .caution { color: var(--warning); }
+.alarm-rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 10px 0; border-top: 1px solid var(--rule); }
+.alarm-rows li:first-child { border-top: 0; padding-top: 0; }
+.alarm-rows .t { font-weight: 500; }
+.alarm-rows .t[data-severity="breach"] { color: var(--negative); }
+.alarm-rows .t[data-severity="caution"] { color: var(--warning); }
+.alarm-rows small { display: block; color: var(--muted); font-size: 12px; }
+.alarm-rows .since { color: var(--muted); text-align: right; }
+.quiet { color: var(--muted); }
+.quiet b { display: block; color: var(--text); font-weight: 500; }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.kv dt { color: var(--muted); }
+.kv dd { text-align: right; }
+.kv-flush { margin-top: 0; padding-top: 0; border-top: 0; }
+.kv dd[data-tone="warning"] { color: var(--warning); }
+.link { color: var(--text); text-decoration: none; font-weight: 500; }
+.link:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+@media (max-width: 1100px) {
+  .cols { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; padding-bottom: 64px; }
+  .rail { position: fixed; z-index: 2; left: 0; right: 0; bottom: 0; flex-direction: row; justify-content: space-around; height: 60px; padding: 0 8px; border-right: 0; border-top: 1px solid var(--border); background: var(--ground); }
+  .rail .mark, .rail .foot { display: none; }
+  .rail a { height: 60px; grid-template-rows: auto auto; gap: 2px; font-size: 11px; }
+  .rail a span { display: block; }
+  .rail a[aria-current]::after { left: 14px; right: 14px; top: -1px; bottom: auto; width: auto; height: 1px; }
+  .canvas { padding: 16px; }
+  .title-row { flex-wrap: wrap; align-items: flex-start; }
+  .title-actions { margin-left: 0; width: 100%; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+  .lanes { grid-template-columns: 1fr; }
+  .lane-label { border-top: 1px solid var(--rule); padding: 12px 0 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline; }
+  .lane-label .name { grid-column: 1; grid-row: 1; }
+  .lane-label .value, .lane-label .seal-word { grid-column: 1; grid-row: 2; }
+  .lane-label .note { grid-column: 2; grid-row: 2; text-align: right; }
+  .lane-plot { border-top: 0; padding-top: 4px; }
+  .lanes > :nth-child(2) { border-top: 0; }
+  .panel { padding: 16px; }
+  body { font-size: 14px; }
+  .lane-label .name, .lane-label .note, .panel-head .meta, .alarm-rows small, .title-row .crumb { font-size: 13px; }
+}
+@media (min-width: 761px) { .rail a span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); } }
+@media (prefers-reduced-motion: reduce) { .btn-invert { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Screens">
+    <svg class="mark" viewBox="0 0 24 24" aria-label="RelicGuard"><rect x="3" y="7" width="18" height="13" rx="2" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M3 7h18" stroke="#4a8ad6" stroke-width="2.2"/><path d="M6 13.5h12" stroke="#e5566f" stroke-width="1.2" stroke-dasharray="2 2"/></svg>
+    <a href="#" aria-current="page" title="Overview"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4z"/></svg><span>Overview</span></a>
+    <a href="#history" title="History"><svg viewBox="0 0 24 24"><path d="M4 18 9 12l4 3 7-9"/></svg><span>History</span></a>
+    <a href="#events" title="Event log"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Events</span></a>
+    <a href="#limits" title="Limits"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Limits</span></a>
+    <a class="foot" href="#settings" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg><span>Settings</span></a>
+  </nav>
+
+  <main class="canvas">
+    <header class="title-row">
+      <div>
+        <p class="crumb"><span translate="no">RelicGuard</span> · CG2271 Group 2 · Bench 2</p>
+        <h1>Card Showcase</h1>
+        <p id="finding"></p>
+      </div>
+      <div class="title-actions">
+        <div class="range" role="group" aria-label="Time range">
+          <button type="button" aria-pressed="false">1 h</button>
+          <button type="button" aria-pressed="true">6 h</button>
+          <button type="button" aria-pressed="false">24 h</button>
+        </div>
+        <span class="feed fig" id="feed"><i></i><span></span></span>
+        <button class="btn-invert" type="button" id="ack" hidden></button>
+      </div>
+    </header>
+
+    <div class="cols">
+      <section class="panel" aria-labelledby="timeline-title">
+        <div class="panel-head"><h2 id="timeline-title">Seal and climate</h2><span class="meta">Last 6 hours · 5-minute averages</span></div>
+        <div class="lanes" id="lanes"></div>
+      </section>
+
+      <div class="side-stack">
+        <section class="panel" aria-labelledby="alarms-title">
+          <div class="panel-head"><h2 id="alarms-title">Alarms</h2><span class="meta fig" id="alarm-count"></span></div>
+          <div id="alarms"></div>
+        </section>
+        <section class="panel" aria-labelledby="events-title">
+          <div class="panel-head"><h2 id="events-title">Events today</h2><a class="link meta" href="#events" id="events-all"></a></div>
+          <ol class="list fig" id="events"></ol>
+        </section>
+        <section class="panel" aria-labelledby="sensors-title">
+          <div class="panel-head"><h2 id="sensors-title">Sensors</h2><span class="meta">Every 2 s</span></div>
+          <dl class="kv kv-flush" id="sensors"></dl>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="data.js"></script>
+<script src="seal.js"></script>
+<script>
+const { data: d, fmt, view } = RG;
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const NS = "http://www.w3.org/2000/svg";
+const RIGHT = 40; // the y-tick lane on the right of every plot, kept by the seal lanes too
+/* Durations set tight in the mono face: "8m 35s". */
+const dur = (ms) => fmt.duration(ms).replace(/ (?=[a-z])/g, "");
+const TICKS = { temperature: [16, 20, 24, 28], humidity: [30, 40, 50, 60, 70], light: [0, 100, 200] };
+
+/* A climate track: 2px straight line, the limit band's edges dashed, ticks on the right. */
+function track(el, metric) {
+  const css = (n) => getComputedStyle(el).getPropertyValue(n).trim();
+  const draw = () => {
+    const w = el.clientWidth, h = 92, x1 = w - RIGHT;
+    const pts = d.history[metric], ticks = TICKS[metric], lim = d.limits[metric];
+    const lo = ticks[0], hi = ticks.at(-1);
+    const x = (i) => (i / (pts.length - 1)) * x1;
+    const y = (v) => 6 + ((hi - Math.min(v, hi)) / (hi - lo)) * (h - 12);
+    let svg = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" role="img" aria-label="${d.metrics[metric].label} over 6 hours, limits ${lim.min} to ${lim.max} ${d.metrics[metric].unit}">`;
+    for (const t of ticks) svg += `<line x1="0" x2="${x1}" y1="${y(t)}" y2="${y(t)}" stroke="${css("--grid")}" stroke-width="1"/><text x="${w}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="${css("--muted")}" font-family="IBM Plex Mono">${t}</text>`;
+    /* The safe band between the limits, in a faint tint of the secure green. */
+    svg += `<rect x="0" y="${y(lim.max)}" width="${x1}" height="${y(Math.max(lim.min, lo)) - y(lim.max)}" fill="${css("--positive")}" fill-opacity="0.1"/>`;
+    for (const v of [lim.min, lim.max]) if (v > lo) svg += `<line x1="0" x2="${x1}" y1="${y(v)}" y2="${y(v)}" stroke="${css("--muted")}" stroke-width="1" stroke-dasharray="3 3"/>`;
+    let path = "", pen = false;
+    pts.forEach((p, i) => { if (p.v == null) { pen = false; return; } path += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`; pen = true; });
+    const over = d.reading[metric] > lim.max && d.feed === "live";
+    svg += `<path d="${path}" fill="none" stroke="${over ? css("--negative") : "#f2f2f3"}" stroke-width="2" stroke-linejoin="round"/>`;
+    const last = pts.findLastIndex((p) => p.v != null);
+    if (last < pts.length - 1) {
+      svg += `<rect x="${x(last)}" y="0" width="${x1 - x(last)}" height="${h}" fill="url(#gap-${metric})"/><defs><pattern id="gap-${metric}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="${css("--control")}" stroke-width="1.5"/></pattern></defs>`;
+    }
+    el.innerHTML = svg + "</svg>";
+  };
+  let width = 0;
+  new ResizeObserver(() => { if (el.clientWidth !== width) { width = el.clientWidth; draw(); } }).observe(el);
+}
+
+/* The hour labels under the lanes, on the same x scale. */
+function axisRow(el) {
+  const draw = () => {
+    const w = el.clientWidth, x1 = w - RIGHT;
+    const x = (t) => ((t - d.start) / (d.now - d.start)) * x1;
+    let out = `<svg viewBox="0 0 ${w} 18" width="100%" height="18" aria-hidden="true">`;
+    for (let t = Math.ceil(d.start / 3600000) * 3600000; t <= d.now; t += 3600000) {
+      const anchor = x(t) < 24 ? "start" : "middle";
+      out += `<text x="${anchor === "start" ? 0 : x(t)}" y="13" text-anchor="${anchor}" font-size="11" fill="#8a8c92" font-family="IBM Plex Mono">${fmt.time(t)}</text>`;
+    }
+    el.innerHTML = out + "</svg>";
+  };
+  let width = 0;
+  new ResizeObserver(() => { if (el.clientWidth !== width) { width = el.clientWidth; draw(); } }).observe(el);
+}
+
+function renderHeader() {
+  $("#finding").innerHTML = esc(view.finding(d));
+  const feed = view.feed(d);
+  $("#feed").dataset.tone = feed.tone;
+  $("#feed span").textContent = `${feed.text} · ${feed.sub.replace(/^\D+/, "")}`;
+  const open = d.alarms.filter((a) => !a.acked).length;
+  $("#ack").hidden = !open;
+  $("#ack").textContent = `Acknowledge ${open}`;
+}
+
+function renderLanes() {
+  const seal = view.seal(d);
+  const openLid = d.lid.find((s) => s.to == null);
+  const lanes = $("#lanes");
+  lanes.innerHTML = `
+    <div class="lane-label"><p class="name">Lid · reed switch</p><p class="seal-word" data-tone="${seal.lid.tone}">${seal.lid.text}</p><p class="note fig">${openLid ? `${dur(d.now - openLid.from)} open` : esc(seal.lid.sub)}</p></div>
+    <div class="lane-plot seal-plot" data-seal="lid"></div>
+    <div class="lane-label"><p class="name">Laser beam</p><p class="seal-word" data-tone="${seal.beam.tone}">${seal.beam.text}</p><p class="note fig">${esc(seal.beam.sub)}</p></div>
+    <div class="lane-plot seal-plot" data-seal="beam"></div>
+    ${["temperature", "humidity", "light"].map((m) => {
+      const st = view.reading(d, m), meta = d.metrics[m], lim = d.limits[m];
+      return `<div class="lane-label" data-tone="${st.tone}"><p class="name">${meta.label} · ${lim.min}–${lim.max} ${meta.unit}</p><p class="value fig">${fmt.value(m, d.reading[m])}<small>${meta.unit}</small></p><p class="note">${st.text}</p></div><div class="lane-plot" data-track="${m}"></div>`;
+    }).join("")}
+    <div></div><div class="axis-row" id="axis"></div>`;
+  for (const el of lanes.querySelectorAll("[data-seal]")) Seal.draw(el, d, { only: el.dataset.seal, names: false, axis: false, lane: 22, right: RIGHT });
+  for (const el of lanes.querySelectorAll("[data-track]")) track(el, el.dataset.track);
+  axisRow($("#axis"));
+}
+
+function renderSide() {
+  $("#alarm-count").textContent = d.alarms.length ? `${d.alarms.length} open` : "0 open";
+  $("#alarms").innerHTML = d.alarms.length
+    ? `<ul class="alarm-rows">${d.alarms.map((a) => `<li><span><span class="t" data-severity="${a.severity}">${esc(a.title)}</span><small>${a.acked ? "Acknowledged · stays until it clears" : "Not acknowledged"}</small></span><span class="since fig">${fmt.time(a.since)}</span></li>`).join("")}</ul>`
+    : `<p class="quiet"><b>None open</b>Lid closed, beam intact, readings within limits.</p>`;
+  const t = d.today;
+  $("#alarms").insertAdjacentHTML("beforeend", `<dl class="kv"><dt>Lid open today</dt><dd class="fig">${dur(t.lidOpenMs)}</dd><dt>Beam trips today</dt><dd class="fig">${t.beamTrips}</dd><dt>Out of limits today</dt><dd class="fig">${t.outOfLimitsMs ? dur(t.outOfLimitsMs) : "0s"}</dd></dl>`);
+  $("#events-all").textContent = `All ${d.events.length}`;
+  $("#sensors").innerHTML = view.sensors(d).map((x) => `<dt>${x.name} <span class="quiet">· ${x.role.toLowerCase()}</span></dt><dd data-tone="${x.tone}">${x.state}</dd>`).join("");
+  fitEvents();
+}
+
+/* Show as many events as the column has room for beside the timeline (at least 3). */
+function fitEvents() {
+  const list = $("#events");
+  const row = (e) => `<li><time>${fmt.time(e.at)}</time><span class="${e.kind === "breach" ? "breach" : e.kind === "caution" ? "caution" : ""}" style="font-family:var(--font)">${esc(e.text)}</span></li>`;
+  const target = $(".cols > .panel").getBoundingClientRect().bottom;
+  let n = Math.min(3, d.events.length);
+  list.innerHTML = d.events.slice(0, n).map(row).join("");
+  if (matchMedia("(max-width: 1100px)").matches) return;
+  while (n < d.events.length) {
+    list.insertAdjacentHTML("beforeend", row(d.events[n]));
+    if ($(".side-stack").getBoundingClientRect().bottom > target) { list.lastElementChild.remove(); break; }
+    n++;
+  }
+}
+
+$("#ack").addEventListener("click", () => {
+  for (const a of d.alarms) if (!a.acked) { a.acked = true; d.events.unshift({ at: d.now, kind: "ack", text: `Acknowledged: ${a.title.toLowerCase()}` }); }
+  renderHeader();
+  renderSide();
+});
+for (const b of document.querySelectorAll(".range button")) {
+  b.addEventListener("click", () => { for (const o of document.querySelectorAll(".range button")) o.setAttribute("aria-pressed", String(o === b)); });
+}
+
+renderHeader();
+renderLanes();
+renderSide();
+document.fonts.ready.then(fitEvents);
+</script>
+</body>
+</html>

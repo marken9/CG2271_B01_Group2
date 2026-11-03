@@ -22,13 +22,9 @@ const DEMO_THRESHOLDS = {
 const STALE_AFTER_MS = 10_000;
 
 const THRESHOLDS_KEY = "relicguard.thresholds.v1";
+const THEME_KEY = "relicguard.theme";
 const MAX_EVENTS = 50;
-const VISIBLE_EVENTS = 3;
-
-/* Alarm priority by severity, after patient-monitor conventions: breaches are
- * high priority, limit and feed problems medium, sensor faults technical. */
-const PRIORITY = { breach: "high", caution: "medium", fault: "technical" };
-const PRIORITY_ICON = { breach: "#i-breach", caution: "#i-caution", fault: "#i-unknown" };
+const VISIBLE_EVENTS = 5;
 
 /* ============================================================
  * Formatting
@@ -58,6 +54,9 @@ const valueFormats = Object.fromEntries(
   ]),
 );
 
+const limitFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+const fmtLimit = (value) => limitFormat.format(value);
+
 function fmtValue(metric, value) {
   return valueFormats[metric].format(value);
 }
@@ -66,6 +65,15 @@ function fmtRange(metric, range) {
   const { unit } = METRICS[metric];
   /* Word joiners keep "40–55" from breaking at the dash. */
   return `${range.min}\u2060–\u2060${range.max}\u00A0${unit}`;
+}
+
+/* Durations, tight for the mono face: "12s", "3m 12s", "1h 04m". */
+function fmtDuration(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
 function fmtAgo(ms) {
@@ -137,16 +145,16 @@ function addEvents(events) {
   state.eventsVersion++;
 }
 
-/* Lid and laser events from the live server (kept there so they survive a
- * reload). A snapshot replaces the earlier server events. */
+/* Lid events from the live server (kept there so they survive a reload). A
+ * snapshot replaces the earlier server events. */
 function applyServerEvents(events, replace) {
   if (replace) state.events = state.events.filter((event) => !event.server);
   addEvents(events.map((event) => ({ ...event, server: true })));
 }
 
-/* With the live source the server logs lid and laser changes, so the page
- * doesn't log them a second time. Unknown-state faults are still the page's. */
-const SERVER_LOGGED = new Set(["lid", "laser"]);
+/* With the live source the server logs lid changes, so the page doesn't log
+ * them a second time. Unknown-state faults are still the page's. */
+const SERVER_LOGGED = new Set(["lid"]);
 let serverLogsSecurity = false;
 
 function pageLogs(key, severity) {
@@ -226,7 +234,6 @@ function evaluate(sample, now, thresholds) {
   }
 
   const lidOpen = sample?.lidOpen ?? null;
-  const laserInterrupted = sample?.laserInterrupted ?? null;
 
   if (feed === "live") {
     if (lidOpen === true) {
@@ -247,34 +254,14 @@ function evaluate(sample, now, thresholds) {
         detail: "The reed switch has not reported a state.",
       });
     }
-
-    if (laserInterrupted === true) {
-      conditions.push({
-        key: "laser",
-        severity: "breach",
-        title: "Laser beam tripped",
-        band: "Laser beam tripped · possible tampering",
-        detail: "Something crossed the beam inside the showcase. Possible tampering.",
-        since: sample.laserSince,
-      });
-    } else if (laserInterrupted === null) {
-      conditions.push({
-        key: "laser",
-        severity: "fault",
-        title: "Laser state unknown",
-        band: "Laser beam · state unknown",
-        detail: "The beam sensor has not reported a state.",
-      });
-    }
   }
 
-  return { feed, readings, lidOpen, laserInterrupted, conditions };
+  return { feed, readings, lidOpen, conditions };
 }
 
 const RESOLVED_TEXT = {
   feed: "Sensor feed restored",
   lid: "Lid closed",
-  laser: "Laser beam clear",
 };
 
 /* Sync the active alert set with the current conditions and log transitions.
@@ -336,16 +323,6 @@ function setIcon(useEl, href) {
   if (useEl.getAttribute("href") !== href) useEl.setAttribute("href", href);
 }
 
-function svgIcon(href, className = "icon") {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", className);
-  svg.setAttribute("aria-hidden", "true");
-  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-  use.setAttribute("href", href);
-  svg.append(use);
-  return svg;
-}
-
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -353,63 +330,67 @@ function el(tag, className, text) {
   return node;
 }
 
-const FEED_VIEW = {
-  live: { label: "Live", timeLabel: "Updated" },
-  stale: { label: "Stale", timeLabel: "Last data" },
-  offline: { label: "Disconnected", timeLabel: "Last data" },
-};
-
-function renderFeed(result, now) {
-  const feed = $("#feed");
-  feed.dataset.feed = result.feed;
-  setText($("#feed-label"), state.sample ? FEED_VIEW[result.feed].label : "No data received");
-
-  $("#feed-time").hidden = !state.sample;
-  if (state.sample) {
-    const updatedAt = $("#updated-at");
-    setText($("#feed-time-label"), FEED_VIEW[result.feed].timeLabel);
-    setText(updatedAt, fmtTime(state.sample.receivedAt));
-    updatedAt.dateTime = new Date(state.sample.receivedAt).toISOString();
-    setText($("#updated-ago"), fmtAgoPhrase(now - state.sample.receivedAt));
-  }
+/* Rebuild a container only when what it shows has changed, so live regions
+ * don't chatter and focus isn't lost every second. */
+function renderOnce(container, value, build) {
+  const signature = JSON.stringify(value);
+  if (container.dataset.signature === signature) return;
+  container.dataset.signature = signature;
+  container.replaceChildren(...build(value));
 }
 
-/* Alarm band: one block per active alert, coloured by priority. Rebuilt only
- * when its content changes, so the live region doesn't chatter. */
-function renderAlarms() {
-  const list = $("#alarm-list");
-  const alerts = sortedAlerts();
+/* When the newest event with this text happened. */
+function lastEventAt(text) {
+  return state.events.find((event) => event.text === text)?.at;
+}
 
-  const items = alerts.length
-    ? alerts.map((a) => {
-        const meta = a.ackAt != null
-          ? `Ack ${fmtShortTime(a.ackAt)} · still active`
-          : `since ${fmtTime(a.since)}`;
-        return {
-          pri: PRIORITY[a.severity],
-          acked: a.ackAt != null,
-          icon: PRIORITY_ICON[a.severity],
-          text: a.band,
-          meta: a.unconfirmed ? `${meta} · unconfirmed` : meta,
-          detail: a.detail,
-        };
-      })
-    : [{ pri: "none", icon: "#i-ok", text: "No active alarms", meta: "All readings within demo limits", detail: "" }];
+/* ---------- Title row ---------- */
 
-  const signature = JSON.stringify(items);
-  if (list.dataset.signature === signature) return;
-  list.dataset.signature = signature;
+/* The screen's one finding, in the line under the title. */
+function finding(result, now) {
+  if (!state.sample) return { tone: "warning", text: "Waiting for the first reading from the showcase." };
+  if (result.feed === "offline") {
+    return {
+      tone: "warning",
+      text: `No data since ${fmtShortTime(state.sample.receivedAt)}. Last known: lid ${result.lidOpen ? "open" : "closed"}.`,
+    };
+  }
+  if (result.feed === "stale") return { tone: "warning", text: `No new data for ${fmtAgo(now - state.sample.receivedAt)}.` };
 
-  list.replaceChildren(
-    ...items.map((item) => {
-      const li = el("li", "alarm");
-      li.dataset.pri = item.pri;
-      li.toggleAttribute("data-acked", Boolean(item.acked));
-      li.append(svgIcon(item.icon), el("span", "t", item.text), el("small", null, item.meta));
-      if (item.detail) li.append(el("span", "visually-hidden", ` ${item.detail}`));
-      return li;
-    }),
-  );
+  const parts = sortedAlerts()
+    .filter((alert) => alert.key !== "feed")
+    .map((alert) => {
+      if (alert.key === "lid") return alert.severity === "breach" ? `Lid open since ${fmtShortTime(alert.since)}` : "Lid state unknown";
+      const meta = METRICS[alert.key];
+      const { status, range } = result.readings[alert.key];
+      if (status === "high") return `${meta.label} above ${fmtLimit(range.max)} ${meta.unit} since ${fmtShortTime(alert.since)}`;
+      if (status === "low") return `${meta.label} below ${fmtLimit(range.min)} ${meta.unit} since ${fmtShortTime(alert.since)}`;
+      return `${meta.label} has no valid reading`;
+    });
+  if (parts.length) return { tone: result.lidOpen ? "negative" : "warning", text: parts.join(" · ") };
+
+  const closedAt = lastEventAt("Lid closed");
+  return { tone: "", text: `Lid closed${closedAt ? ` since ${fmtShortTime(closedAt)}` : ""}. All readings within limits.` };
+}
+
+function renderFinding(result, now) {
+  const line = $("#finding");
+  const { tone, text } = finding(result, now);
+  line.dataset.tone = tone;
+  setText(line, text);
+}
+
+const FEED_LABEL = { live: "Live", stale: "Stale", offline: "Disconnected" };
+
+function renderFeed(result) {
+  $("#feed").dataset.feed = result.feed;
+  setText($("#feed-label"), state.sample ? FEED_LABEL[result.feed] : "No data received");
+  const time = $("#updated-at");
+  time.hidden = !state.sample;
+  if (state.sample) {
+    setText(time, fmtTime(state.sample.receivedAt));
+    time.dateTime = new Date(state.sample.receivedAt).toISOString();
+  }
 }
 
 function unacknowledgedAlerts() {
@@ -418,139 +399,302 @@ function unacknowledgedAlerts() {
 
 function renderAckKey() {
   const count = unacknowledgedAlerts().length;
-  const key = $("#ack-all");
   /* aria-disabled (not disabled) so focus stays on the key after use. */
-  key.setAttribute("aria-disabled", String(count === 0));
-  setText($("#ack-label"), count ? `Acknowledge (${count})` : "Acknowledge");
+  $("#ack-all").setAttribute("aria-disabled", String(count === 0));
+  setText($("#ack-label"), count ? `Acknowledge ${count}` : "Acknowledge");
 }
 
-const READING_STATUS = {
-  ok: () => ({ icon: "#i-ok", text: "Within limits" }),
-  high: (range, alert) => ({ icon: "#i-up", text: `High · above ${range.max} since ${fmtTime(alert.since)}` }),
-  low: (range, alert) => ({ icon: "#i-down", text: `Low · below ${range.min} since ${fmtTime(alert.since)}` }),
-  missing: (range, alert) => ({
-    icon: "#i-unknown",
-    text: alert ? `No valid reading since ${fmtTime(alert.since)}` : state.sample ? "No valid reading" : "Waiting for first sample",
-  }),
-  stale: () => ({ icon: "#i-offline", text: "Last known · not current" }),
+/* ---------- Lane labels ---------- */
+
+const READING_NOTE = {
+  ok: () => "Within limits",
+  high: (range) => `Above ${fmtLimit(range.max)}`,
+  low: (range) => `Below ${fmtLimit(range.min)}`,
+  missing: () => (state.sample ? "No valid reading" : "Waiting for first sample…"),
+  stale: () => "Last known · not current",
 };
 
-function renderParams(result) {
-  for (const metric of Object.keys(METRICS)) {
-    const row = $(`.param[data-metric="${metric}"]`);
+function renderReadings(result) {
+  for (const [metric, meta] of Object.entries(METRICS)) {
+    const label = $(`.lane-label[data-metric="${metric}"]`);
     const { value, status, range } = result.readings[metric];
-    const view = READING_STATUS[status](range, state.alerts.get(metric));
-
-    row.dataset.state = status;
-    setText($('[data-field="value"]', row), value == null ? "-?-" : fmtValue(metric, value));
-    setText($('[data-field="max"]', row), String(range.max));
-    setText($('[data-field="min"]', row), String(range.min));
-    setIcon($(".status use", row), view.icon);
-    setText($('[data-field="status"]', row), view.text);
+    label.dataset.state = status;
+    setText($('[data-field="value"]', label), value == null ? "—" : fmtValue(metric, value));
+    setText($('[data-field="limits"]', label), `${fmtLimit(range.min)}–${fmtLimit(range.max)} ${meta.unit}`);
+    setText($('[data-field="status"]', label), READING_NOTE[status](range));
   }
 }
 
-/* 6-hour trend per reading, drawn in a stretched 1000×100 viewBox so it fills
- * the row at any width; labels are HTML so they don't stretch. */
-function drawTrace(plot, metric, points, range, status) {
+function renderLid(result, now) {
+  const label = $("#lid-label");
+  const live = result.feed === "live";
+  let view;
+  if (live && result.lidOpen === true) {
+    const alert = state.alerts.get("lid");
+    view = { state: "breach", text: "Open", sub: alert ? `Open for ${fmtDuration(now - alert.since)}` : "" };
+  } else if (live && result.lidOpen === false) {
+    const closedAt = lastEventAt("Lid closed");
+    view = { state: "secure", text: "Closed", sub: closedAt ? `Since ${fmtShortTime(closedAt)}` : "" };
+  } else {
+    const known = result.lidOpen;
+    view = { state: "unknown", text: "Unknown", sub: known == null ? "" : `Last known ${known ? "open" : "closed"}` };
+  }
+  label.dataset.state = view.state;
+  setText($('[data-field="text"]', label), view.text);
+  setText($('[data-field="sub"]', label), view.sub);
+}
+
+/* ---------- Lanes: the lid and the climate on one time axis ---------- */
+
+const PLOT_RIGHT = 40; // the y-tick lane on the right of every plot; the lid lane keeps it too
+const TRACK_HEIGHT = 120;
+const HOUR = 60 * 60 * 1000;
+
+/* The lid's open periods inside the window, from the event log. */
+function lidSpans(result, t0, t1) {
+  const spans = [];
+  let open = null;
+  for (let i = state.events.length - 1; i >= 0; i--) {
+    const event = state.events[i];
+    if (event.text === "Lid open") open = event.at;
+    else if (event.text === "Lid closed" && open != null) {
+      spans.push({ from: open, to: event.at });
+      open = null;
+    }
+  }
+  if (result.lidOpen === true) spans.push({ from: open ?? state.alerts.get("lid")?.since ?? t1, to: null });
+  return spans.filter((span) => (span.to ?? t1) >= t0).map((span) => ({ ...span, from: Math.max(span.from, t0) }));
+}
+
+/* Three to five round ticks that cover the limits and the data. */
+function niceTicks(lo, hi) {
+  const raw = (hi - lo || 1) / 3;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((m) => m >= raw);
+  const ticks = [];
+  for (let v = Math.floor(lo / step) * step; v < hi + step / 2; v += step) ticks.push(+v.toFixed(6));
+  return ticks;
+}
+
+function hatch(id) {
+  return `<defs><pattern id="${id}" class="t-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6"/></pattern></defs>`;
+}
+
+/* A climate track: 2px straight line, the safe band between the limits, the
+ * limits dashed, round ticks on the right, a hatched gap where data stops. */
+function drawTrack(plot, metric, points, reading, { t0, t1 }) {
+  const w = plot.clientWidth;
+  if (!w) return;
+  const x1 = w - PLOT_RIGHT;
+  const { range, status } = reading;
   const values = points.filter((p) => p.v != null).map((p) => p.v);
   let lo = Math.min(range.min, ...values);
   let hi = Math.max(range.max, ...values);
-  const pad = (hi - lo) * 0.15 || 1;
+  const pad = (hi - lo) * 0.1 || 1;
   lo = metric === "temperature" ? lo - pad : Math.max(0, lo - pad);
-  hi += pad;
+  hi = metric === "humidity" ? Math.min(100, hi + pad) : hi + pad;
+  const ticks = niceTicks(lo, hi);
+  lo = ticks[0];
+  hi = ticks.at(-1);
 
-  const x = (i) => (i / (points.length - 1)) * 1000;
-  const y = (v) => ((hi - v) / (hi - lo)) * 100;
+  const x = (t) => ((t - t0) / (t1 - t0 || 1)) * x1;
+  const y = (v) => 6 + ((hi - v) / (hi - lo)) * (TRACK_HEIGHT - 12);
 
-  const root = svg("svg", { viewBox: "0 0 1000 100", preserveAspectRatio: "none" });
-  const lastValid = points.findLastIndex((p) => p.v != null);
-  if (lastValid >= 0 && lastValid < points.length - 1) {
-    root.append(svg("rect", { class: "trace-gap", x: x(lastValid), y: 0, width: 1000 - x(lastValid), height: 100 }));
+  let out = `<svg viewBox="0 0 ${w} ${TRACK_HEIGHT}" height="${TRACK_HEIGHT}">${hatch(`hatch-${metric}`)}`;
+  for (const tick of ticks) {
+    out += `<line class="t-grid" x1="0" x2="${x1}" y1="${y(tick)}" y2="${y(tick)}"/>`;
+    out += `<text class="t-tick" x="${w}" y="${y(tick) + 4}" text-anchor="end">${fmtLimit(tick)}</text>`;
   }
-
-  const tags = [];
-  for (const limit of [range.max, range.min]) {
-    if (limit <= lo) continue;
-    root.append(svg("line", { class: "trace-limit", x1: 0, x2: 1000, y1: y(limit), y2: y(limit), "vector-effect": "non-scaling-stroke" }));
-    const tag = el("span", "trace-tag", String(limit));
-    tag.style.top = `${y(limit)}%`;
-    tags.push(tag);
+  const bandTop = y(Math.min(range.max, hi));
+  const bandBottom = y(Math.max(range.min, lo));
+  out += `<rect class="t-band" x="0" y="${bandTop}" width="${x1}" height="${Math.max(0, bandBottom - bandTop)}"/>`;
+  for (const limit of [range.min, range.max]) {
+    if (limit > lo && limit < hi) out += `<line class="t-limit" x1="0" x2="${x1}" y1="${y(limit)}" y2="${y(limit)}"/>`;
   }
 
   let d = "";
   let pen = false;
-  points.forEach((p, i) => {
+  for (const p of points) {
     if (p.v == null) {
       pen = false;
-      return;
+      continue;
     }
-    d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(2)}`;
+    d += `${pen ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`;
     pen = true;
-  });
-  root.append(svg("path", { class: "trace-line", d, "vector-effect": "non-scaling-stroke" }));
-
-  if (status === "missing" && lastValid >= 0) {
-    const label = el("span", "trace-nosignal", "No signal");
-    label.style.left = `${(x(lastValid) + 1000) / 20}%`;
-    tags.push(label);
   }
+  const flag = status === "high" || status === "low" ? " data-over" : status === "stale" ? " data-stale" : "";
+  out += `<path class="t-line"${flag} d="${d}"/>`;
 
-  plot.replaceChildren(root, ...tags);
+  const lastValid = points.findLastIndex((p) => p.v != null);
+  if (lastValid < points.length - 1) {
+    const gx = lastValid >= 0 ? x(points[lastValid].t) : 0;
+    out += `<rect x="${gx}" y="0" width="${Math.max(0, x1 - gx)}" height="${TRACK_HEIGHT}" fill="url(#hatch-${metric})"/>`;
+  }
+  plot.innerHTML = `${out}</svg>`;
 }
 
-let tracedKey = "";
+/* The lid lane: a green track while closed, a red block for each opening. */
+function drawLidLane(plot, result, { t0, t1 }) {
+  const w = plot.clientWidth;
+  if (!w) return;
+  const x1 = w - PLOT_RIGHT;
+  const h = 46;
+  const laneTop = 18;
+  const laneHeight = 22;
+  const x = (t) => Math.max(0, Math.min(x1, ((t - t0) / (t1 - t0 || 1)) * x1));
 
-function renderTraces(result) {
-  const key = `${state.sample?.receivedAt}|${result.feed}|${source.historyStamp}|${JSON.stringify(state.thresholds)}`;
-  if (key === tracedKey) return;
-  tracedKey = key;
+  const root = svg("svg", { viewBox: `0 0 ${w} ${h}`, height: h });
+  root.innerHTML = hatch("hatch-lid");
+  plot.replaceChildren(root);
+  root.append(svg("line", { class: "s-track", x1: 0, x2: x1, y1: laneTop + laneHeight / 2, y2: laneTop + laneHeight / 2 }));
 
+  /* Labels never collide: the opening still in progress is placed first; a
+   * later label that would touch one falls back to its time, or is dropped. */
+  const placed = [];
+  const tag = (text, at, anchor, muted = false) => {
+    const node = svg("text", { class: "s-tag", x: at, y: laneTop - 5, "text-anchor": anchor });
+    if (muted) node.setAttribute("data-muted", "");
+    node.textContent = text;
+    root.append(node);
+    const box = node.getBBox();
+    if (placed.some((p) => box.x < p.x + p.width + 8 && p.x < box.x + box.width + 8)) {
+      node.remove();
+      return false;
+    }
+    placed.push(box);
+    return true;
+  };
+
+  if (result.feed !== "live" && state.sample) {
+    const gx = x(state.sample.receivedAt);
+    root.append(svg("rect", { x: gx, y: laneTop, width: Math.max(0, x1 - gx), height: laneHeight, fill: "url(#hatch-lid)" }));
+    tag("no data", x1, "end", true);
+  }
+
+  const spans = lidSpans(result, t0, t1).sort((a, b) => (a.to == null ? -1 : b.to == null ? 1 : 0));
+  for (const span of spans) {
+    const a = x(span.from);
+    const b = Math.max(x(span.to ?? t1), a + 3);
+    root.append(svg("rect", { class: "s-block", x: a, y: laneTop, width: b - a, height: laneHeight }));
+    const anchor = a > w - 150 ? "end" : "start";
+    const full = span.to == null ? `Open since ${fmtShortTime(span.from)}` : `${fmtShortTime(span.from)} · ${fmtDuration(span.to - span.from)}`;
+    tag(full, anchor === "end" ? b : a, anchor) || tag(fmtShortTime(span.from), anchor === "end" ? b : a, anchor);
+  }
+}
+
+function drawAxis(row, { t0, t1 }) {
+  const w = row.clientWidth;
+  if (!w) return;
+  const x1 = w - PLOT_RIGHT;
+  let out = `<svg viewBox="0 0 ${w} 16" height="16">`;
+  /* Every hour where there's room for the labels, every two hours on a phone. */
+  const step = (x1 / ((t1 - t0) / HOUR) < 56 ? 2 : 1) * HOUR;
+  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
+    const at = ((t - t0) / (t1 - t0 || 1)) * x1;
+    const anchor = at < 24 ? "start" : at > x1 - 20 ? "end" : "middle";
+    out += `<text class="t-tick" x="${anchor === "start" ? 0 : at}" y="12" text-anchor="${anchor}">${fmtShortTime(t)}</text>`;
+  }
+  row.innerHTML = `${out}</svg>`;
+}
+
+let lanesKey = "";
+
+function renderLanes(result) {
+  const width = $("#axis").clientWidth;
+  const key = `${state.sample?.receivedAt}|${result.feed}|${source.historyStamp}|${state.eventsVersion}|${JSON.stringify(state.thresholds)}|${width}|${result.lidOpen}`;
+  if (key === lanesKey) return;
+  lanesKey = key;
+
+  const histories = Object.fromEntries(Object.keys(METRICS).map((metric) => [metric, source.history(metric)]));
+  const scale = { t0: histories.temperature[0].t, t1: histories.temperature.at(-1).t };
   for (const metric of Object.keys(METRICS)) {
-    const { status, range } = result.readings[metric];
-    const points = source.history(metric);
-    if (status === "missing") points.at(-1).v = null;
-    drawTrace($(`.param[data-metric="${metric}"] .trace-plot`), metric, points, range, status);
+    const points = histories[metric];
+    if (result.readings[metric].status === "missing") points.at(-1).v = null;
+    drawTrack($(`[data-track="${metric}"]`), metric, points, result.readings[metric], scale);
   }
+  drawLidLane($("#lid-plot"), result, scale);
+  drawAxis($("#axis"), scale);
+  renderLidSummary(result, scale);
 }
 
-function renderSecurity(result) {
-  const live = result.feed === "live";
+/* How long the lid was open in the window, beside the alarms. */
+function renderLidSummary(result, { t0, t1 }) {
+  const spans = lidSpans(result, t0, t1);
+  const openMs = spans.reduce((sum, span) => sum + ((span.to ?? t1) - span.from), 0);
+  renderOnce($("#lid-today"), [fmtDuration(openMs), spans.length], ([open, count]) => [
+    el("dt", null, "Lid open, last 6 h"),
+    el("dd", "fig", open),
+    el("dt", null, "Times opened, last 6 h"),
+    el("dd", "fig", String(count)),
+  ]);
+}
 
-  renderSeal($("#seal-lid"), live, result.lidOpen, {
-    on: { state: "breach", icon: "#i-lid-open", text: "Open", sub: "Reed switch" },
-    off: { state: "secure", icon: "#i-lid-closed", text: "Closed", sub: "Reed switch" },
-    lastOn: "open",
-    lastOff: "closed",
-  });
+/* ---------- Side column ---------- */
 
-  const tripped = state.alerts.get("laser");
-  renderSeal($("#seal-laser"), live, result.laserInterrupted, {
-    on: {
-      state: "breach",
-      icon: "#i-beam-broken",
-      text: "Tripped",
-      sub: tripped ? `Since ${fmtTime(tripped.since)} · possible tampering` : "Possible tampering",
-    },
-    off: { state: "secure", icon: "#i-beam", text: "No tampering", sub: "Beam intact" },
-    lastOn: "tripped",
-    lastOff: "no tampering",
+function renderAlarms() {
+  const alerts = sortedAlerts();
+  setText($("#alarm-count"), `${alerts.length} open`);
+  const items = alerts.map((a) => ({
+    severity: a.severity,
+    title: a.title,
+    sub: `${a.ackAt != null ? `Acknowledged ${fmtShortTime(a.ackAt)} · stays until it clears` : "Not acknowledged"}${a.unconfirmed ? " · unconfirmed" : ""}`,
+    since: fmtShortTime(a.since),
+    detail: a.detail,
+  }));
+
+  renderOnce($("#alarm-list"), items, (list) => {
+    if (!list.length) {
+      const note = el("p", "none");
+      note.append(el("b", null, "None open"), "Lid closed and readings within demo limits.");
+      const li = el("li");
+      li.append(note);
+      return [li];
+    }
+    return list.map((item) => {
+      const li = el("li");
+      const main = el("span");
+      const title = el("span", "t", item.title);
+      title.dataset.severity = item.severity;
+      main.append(title, el("small", null, item.sub));
+      if (item.detail) main.append(el("span", "visually-hidden", ` ${item.detail}`));
+      li.append(main, el("span", "since fig", item.since));
+      return li;
+    });
   });
 }
 
-function renderSeal(sec, live, value, variants) {
-  let view;
-  if (live && value !== null) {
-    view = value ? variants.on : variants.off;
-  } else {
-    const sub = value === null ? "" : `Last known: ${value ? variants.lastOn : variants.lastOff}`;
-    view = { state: "unknown", icon: "#i-unknown", text: "Unknown", sub };
-  }
+function renderSensors(result) {
+  const sample = state.sample;
+  const status = (valid) => {
+    if (!sample) return ["Waiting", "warning"];
+    if (result.feed === "offline") return [`No data since ${fmtShortTime(sample.receivedAt)}`, "warning"];
+    if (result.feed === "stale") return ["Stale", "warning"];
+    return valid ? ["Reporting", ""] : ["No valid reading", "warning"];
+  };
+  const uplink = !sample ? ["Waiting", "warning"] : result.feed === "live" ? ["Connected", ""] : [FEED_LABEL[result.feed], "warning"];
+  const rows = [
+    ["DHT11", "temperature, humidity", ...status(sample?.temperature != null && sample?.humidity != null)],
+    ["Photoresistor", "light", ...status(sample?.light != null)],
+    ["Reed switch", "lid", ...status(sample?.lidOpen != null)],
+    ["ESP32", "Wi-Fi uplink", ...uplink],
+  ];
+  renderOnce($("#sensors"), rows, (list) =>
+    list.flatMap(([name, role, text, tone]) => {
+      const dt = el("dt", null, `${name} · ${role}`);
+      const dd = el("dd", null, text);
+      if (tone) dd.dataset.tone = tone;
+      return [dt, dd];
+    }),
+  );
+}
 
-  sec.dataset.state = view.state;
-  setIcon($(".sec-state use", sec), view.icon);
-  setText($('[data-field="text"]', sec), view.text);
-  setText($('[data-field="sub"]', sec), view.sub);
+function eventItem(event) {
+  const li = el("li", "event");
+  li.dataset.kind = event.kind;
+  const time = el("time", null, fmtShortTime(event.at));
+  time.dateTime = new Date(event.at).toISOString();
+  li.append(time, el("span", "event-text", event.text));
+  return li;
 }
 
 let renderedEventsVersion = -1;
@@ -559,30 +703,33 @@ function renderEvents() {
   if (renderedEventsVersion === state.eventsVersion) return;
   renderedEventsVersion = state.eventsVersion;
 
+  setText($("#events-all"), state.events.length > VISIBLE_EVENTS ? `All events (${state.events.length})` : "All events");
   $("#event-list").replaceChildren(
-    ...state.events.slice(0, VISIBLE_EVENTS).map((event) => {
-      const li = el("li", "event");
-      const time = el("time", "num", fmtTime(event.at));
-      time.dateTime = new Date(event.at).toISOString();
-      li.append(time, el("span", "event-text", event.text));
-      return li;
-    }),
+    ...(state.events.length ? state.events.slice(0, VISIBLE_EVENTS).map(eventItem) : [el("li", "event-empty", "No events yet")]),
   );
 }
 
 function update() {
   const now = Date.now();
   const result = evaluate(state.sample, now, state.thresholds);
+  state.result = result;
 
   reconcile(result, now);
-  renderFeed(result, now);
-  renderAlarms();
+  renderFinding(result, now);
+  renderFeed(result);
   renderAckKey();
-  renderParams(result);
-  renderTraces(result);
-  renderSecurity(result);
+  renderReadings(result);
+  renderLid(result, now);
+  renderLanes(result);
+  renderAlarms();
+  renderSensors(result);
   renderEvents();
 }
+
+/* Redraw the plots when their width changes. */
+new ResizeObserver(() => {
+  if (state.result) renderLanes(state.result);
+}).observe($("#lanes"));
 
 /* ============================================================
  * Thresholds dialog
@@ -623,7 +770,7 @@ function readThresholdsForm() {
     } else if (range.min >= range.max) {
       message = "The minimum must be lower than the maximum.";
     } else if (!isValidRange(metric, range)) {
-      message = metric === "humidity" ? "Humidity must be between 0 and 100 % RH." : "Light cannot be negative.";
+      message = metric === "humidity" ? "Humidity must be between 0 and 100 % RH." : "Light can’t be negative. Enter 0 or more.";
     }
 
     error.textContent = message;
@@ -718,7 +865,7 @@ function drawChart(plot, metric, points, range) {
 
   for (const v of [range.max, range.min]) {
     const label = svg("text", { class: "chart-axis", x: m.left - 8, y: y(v) + 4, "text-anchor": "end" });
-    label.textContent = String(v);
+    label.textContent = fmtLimit(v);
     root.append(label);
   }
 
@@ -826,7 +973,7 @@ function renderHistory() {
     const title = el("span", "chart-title", meta.label);
     title.append(el("span", "unit", meta.unit));
     const legend = el("span", "chart-legend");
-    legend.append(el("span", "chart-legend-band"), `Limits ${fmtRange(metric, state.thresholds[metric])} (demo)`);
+    legend.append(el("span", "chart-legend-band"), `Limits ${fmtRange(metric, state.thresholds[metric])}${isLive ? "" : " (demo)"}`);
     head.append(title, legend);
 
     figure.append(head, el("div", "chart-plot"));
@@ -858,7 +1005,13 @@ function renderHistory() {
   table.append(tbody);
   details.append(table);
 
-  body.replaceChildren(...figures, details);
+  const log = el("section", "event-log");
+  log.append(el("h3", null, "Event Log"));
+  const list = el("ol");
+  list.append(...state.events.map(eventItem));
+  log.append(state.events.length ? list : el("p", "event-empty", "No events yet"));
+
+  body.replaceChildren(log, ...figures, details);
   drawHistoryCharts();
 }
 
@@ -908,12 +1061,6 @@ for (const [hash, dialog] of Object.entries(DIALOG_HASHES)) {
 window.addEventListener("hashchange", openDialogFromHash);
 
 document.addEventListener("click", (event) => {
-  const opener = event.target.closest("[data-open]");
-  if (opener) {
-    openDialog(document.getElementById(opener.dataset.open));
-    return;
-  }
-
   /* Acknowledge records that someone has seen the alarms; each one stays in
    * the band until live data shows its condition has ended. */
   if (event.target.closest("#ack-all")) {
@@ -924,6 +1071,32 @@ document.addEventListener("click", (event) => {
     }
     update();
   }
+});
+
+/* Theme: dark or light, remembered on this device. */
+const THEME_COLOR = { dark: "#171719", light: "#f4f4f5" };
+
+function applyTheme(theme, save) {
+  document.documentElement.dataset.theme = theme;
+  $('meta[name="theme-color"]').content = THEME_COLOR[theme];
+  const next = theme === "dark" ? "light" : "dark";
+  const toggle = $("#theme-toggle");
+  toggle.setAttribute("aria-label", `Switch to ${next} mode`);
+  toggle.title = `Switch to ${next} mode`;
+  setIcon($("use", toggle), next === "light" ? "#i-sun" : "#i-moon");
+  setText($("#theme-label"), next === "light" ? "Light" : "Dark");
+  if (save) {
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* Not remembered; still applied for this visit. */
+    }
+  }
+}
+
+applyTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark", false);
+$("#theme-toggle").addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
 });
 
 /* Close dialogs on backdrop click. */
@@ -951,7 +1124,8 @@ for (const [value, { label }] of Object.entries(DEMO_SCENARIOS)) {
 }
 dataSelect.append(liveOption, demoGroup);
 dataSelect.value = initialScenario ?? "live";
-setText($("#source-name"), isLive ? "Live data." : "Demo data.");
+$("#mode-tag").hidden = isLive;
+setText($("#history-sub"), `Last 6 hours · 5-minute averages · ${isLive ? "live" : "demo"} data`);
 
 dataSelect.addEventListener("change", () => {
   const url = new URL(location.href);

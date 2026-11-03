@@ -4,9 +4,9 @@
  * Streams readings from server.js (GET /api/stream, Server-Sent Events) and
  * calls onSample() with the same shape as demo-source.js, plus:
  *
- *   lidOpenSince, laserSince: number | null   // when the lid opened / beam tripped
+ *   lidOpenSince: number | null   // when the lid opened
  *
- * The server keeps the lid/laser event log so it survives reloads; those
+ * The server keeps the lid event log so it survives reloads; those
  * events arrive through onEvents(events, replace).
  */
 
@@ -41,7 +41,6 @@ export function createLiveSource({ url = "api/stream", onSample, onEvents }) {
       ...sample,
       receivedAt: local(sample.receivedAt),
       lidOpenSince: local(sample.lidOpenSince),
-      laserSince: local(sample.laserSince),
     };
   }
 

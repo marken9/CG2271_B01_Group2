@@ -36,7 +36,7 @@ const READING_LIMITS = {
   humidity: [0, 100],
   light: [0, 200_000],
 };
-const READING_FLAGS = ["lidOpen", "laserInterrupted"];
+const READING_FLAGS = ["lidOpen"];
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",

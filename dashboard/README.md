@@ -2,7 +2,7 @@
 
 Monitoring dashboard for the card showcase box. The ESP32 posts readings to this
 server, which streams them to the page and keeps six hours of history plus the
-lid/laser event log in Postgres (Supabase).
+lid event log in Postgres (Supabase).
 
 ## Run locally
 
@@ -17,10 +17,11 @@ Without `DATABASE_URL`, readings are kept in memory only. Send a test reading:
 ```sh
 curl -X POST http://localhost:3000/api/readings \
   -H "Authorization: Bearer dev-token" -H "Content-Type: application/json" \
-  -d '{"temperature":21.4,"humidity":47.2,"light":38,"lidOpen":false,"laserInterrupted":null}'
+  -d '{"temperature":21.4,"humidity":47.2,"light":38,"lidOpen":false}'
 ```
 
-- Demo data: pick a demo state in the footer, or open `?demo=normal|humidity|lid|laser|offline`.
+- Demo data: pick a demo state with the Data picker, or open `?demo=normal|humidity|lid|offline`.
+- Theme: the sun/moon button in the rail switches dark and light; the choice is remembered per device.
 - Secondary views: `#history`, `#thresholds`.
 
 ## Deploy (Render + Supabase)
@@ -48,7 +49,7 @@ curl -X POST http://localhost:3000/api/readings \
 
 | Route | |
 |---|---|
-| `POST /api/readings` | One reading, `Authorization: Bearer <INGEST_TOKEN>`. JSON fields `temperature` (°C), `humidity` (% RH), `light`, `lidOpen`, `laserInterrupted`; each may be `null` for "no valid reading". Returns 204. |
+| `POST /api/readings` | One reading, `Authorization: Bearer <INGEST_TOKEN>`. JSON fields `temperature` (°C), `humidity` (% RH), `light`, `lidOpen`; each may be `null` for "no valid reading". Returns 204. |
 | `GET /api/stream` | Server-Sent Events: a `snapshot`, then `sample`, `status` and `history` messages. |
 | `GET /healthz` | `{ "ok": true }` |
 
@@ -59,7 +60,5 @@ every 2 seconds; the page marks data stale after 10.
 
 - The photoresistor reports an ADC percentage, not lux. Either calibrate it to lux or
   change the light unit and thresholds in `METRICS` / `DEMO_THRESHOLDS` in `public/app.js`.
-- There is no laser-beam sensor in the firmware yet, so the ESP32 sends
-  `laserInterrupted: null` and the dashboard shows the beam as unknown, not intact.
 - The MCXC doesn't send anything to the ESP32 yet. The sketch's header comment
   proposes a one-line format and the `PRINTF` that would produce it.

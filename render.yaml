@@ -11,3 +11,9 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # Secret the ESP32 sends as "Authorization: Bearer <token>".
+      - key: INGEST_TOKEN
+        sync: false
+      # Supabase session pooler connection string (keeps history across restarts).
+      - key: DATABASE_URL
+        sync: false

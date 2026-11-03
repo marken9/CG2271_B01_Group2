@@ -2,7 +2,7 @@
  * Reading store.
  *
  * Keeps the latest sample, six hours of one-minute averages and the recent
- * lid/laser events in memory. When DATABASE_URL is set, minute averages and
+ * lid events in memory. When DATABASE_URL is set, minute averages and
  * events are also written to Postgres (e.g. Supabase) and reloaded on start,
  * so a restart or redeploy doesn't wipe the trends or the event log.
  */
@@ -17,11 +17,10 @@ const MAX_EVENTS = 50;
 
 export const METRICS = ["temperature", "humidity", "light"];
 
-/* Lid and laser transitions are logged here, not in the browser, so anyone
+/* Lid transitions are logged here, not in the browser, so anyone
  * opening the page later still sees them. Texts match the page's alert titles. */
 const SECURITY = {
   lid: { field: "lidOpen", on: "Lid open", off: "Lid closed" },
-  laser: { field: "laserInterrupted", on: "Laser beam tripped", off: "Laser beam clear" },
 };
 
 const SCHEMA = `
@@ -90,7 +89,6 @@ export function createStore({ databaseUrl, onError = console.error } = {}) {
   const events = []; // newest first: { at, kind, text }
   const security = {
     lid: { on: null, since: null },
-    laser: { on: null, since: null },
   };
 
   async function query(text, values) {
@@ -213,7 +211,6 @@ export function createStore({ databaseUrl, onError = console.error } = {}) {
       receivedAt: now,
       ...reading,
       lidOpenSince: reading.lidOpen ? security.lid.since : null,
-      laserSince: reading.laserInterrupted ? security.laser.since : null,
     };
 
     return { sample: latest, events: newEvents };
