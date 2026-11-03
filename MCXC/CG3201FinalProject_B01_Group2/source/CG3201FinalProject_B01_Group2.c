@@ -101,7 +101,7 @@
  * those two numbers here. Either order works: some modules read LOWER when
  * brighter. Until calibrated, brightness equals the raw ADC percentage.
  */
-#define LIGHT_DARK_RAW      0110U
+#define LIGHT_DARK_RAW      110U
 #define LIGHT_BRIGHT_RAW    4010U
 #define DHT_SAMPLE_MS       2000U
 #define PRINT_SAMPLE_MS     1000U
@@ -391,7 +391,8 @@ static bool ADC_Init(void) {
      */
 
     LIGHT_PORT->PCR[LIGHT_PIN] = PORT_PCR_MUX(0U);
-    /* Internal pull-up to 3.3 V completes the KY-018 divider (module's own resistor is not connected). */
+    /* KY-018: S -> A0, "-" -> 3.3 V, middle -> GND, plus an extra resistor
+     * from S to GND on the breadboard. Brighter light = higher raw value. */
     PORTB->PCR[JOY_X_PIN] = PORT_PCR_MUX(0U);
     PORTB->PCR[JOY_Y_PIN] = PORT_PCR_MUX(0U);
     GPIOB->PDDR &= ~((1UL << LIGHT_PIN) | (1UL << JOY_X_PIN) | (1UL << JOY_Y_PIN));
