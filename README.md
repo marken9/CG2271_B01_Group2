@@ -8,20 +8,53 @@ RelicGuard is an IoT-enabled smart display case for collectibles.
 
 The current firmware tests the reed switch and a KY-023-style analog joystick.
 It verifies a directional passcode and grants a 30-second authorization window.
-Door state and authorization now control the onboard RGB LED. No physical lock,
-ESP32 communication or web service is connected yet.
+Door state and authorization control the onboard RGB LED and KY-006 passive
+buzzer. UART and ESP integration are documented in `docs/person2-uart.md`;
+environmental warnings are documented in `docs/person4-env-warnings.md`.
 
-| Door | Authorization | Onboard RGB LED |
-| --- | --- | --- |
-| Closed | Not granted | Solid blue |
-| Either | Granted | Green blinking: 250 ms on, 250 ms off |
-| Open | Not granted | Red blinking: 250 ms on, 250 ms off |
+| Door | Authorization | Onboard RGB LED | Buzzer |
+| --- | --- | --- | --- |
+| Closed | Not granted | Solid blue | Silent |
+| Either | Granted | Green blinking: 250 ms on, 250 ms off | Silent |
+| Open | Not granted | Red blinking: 250 ms on, 250 ms off | Continuous 2 kHz tone |
 
 Closing the door clears the alarm immediately after debounce. A correct
 passcode also clears an ongoing alarm and starts green blinking, whether the
 door is open or closed. If the 30-second grant expires while open, red blinking
 starts again; if closed, the LED returns to solid blue. Closing does not
 cancel the remaining grant: reopening within that window stays authorized.
+
+### Passive buzzer wiring and test
+
+Disconnect USB power before wiring the KY-006:
+
+| Buzzer pin | MCU connection | Header |
+| --- | --- | --- |
+| S | D10 / PTD4 / TPM0 channel 4 | J2 pin 6 |
+| − | GND | J3 pin 12 (or pin 14) |
+| Middle | Leave unconnected for the standard KY-006 | — |
+
+Use the printed S and − markings, not an assumed left/right orientation.
+The standard passive KY-006 uses signal and ground, as shown in the
+[Joy-IT Arduino wiring](https://sensorkit.joy-it.net/en/sensors/ky-006).
+The [NXP pinout](https://www.nxp.com/docs/en/quick-reference-guide/MCX-C444-QSG.pdf)
+identifies D10 as PTD4 on J2 pin 6.
+
+Refresh/build the MCX project, debug and resume. With no access granted, open
+the lid: red should blink and the buzzer should sound continuously, including
+the LED's dark intervals. Close the lid: blue and silence. Open again and enter
+the correct passcode: green blinking and silence. Leave it open until access
+expires after 30 seconds: red blinking and sound should return. An incorrect
+passcode must not silence an ongoing alarm. Startup before the first valid door
+reading is silent. Verify joystick and UART still respond while sounding.
+
+`Buzzer_Init` configures hardware PWM at 2 kHz, 50% duty when enabled, using
+the existing 8 MHz MCGIRCLK with /8 prescaling (MOD=499, CnV=250). Zero duty
+silences it. `ControlTask` enables it from `ALARM_UNAUTHORIZED_OPEN`, independently
+of blink phase. No extra task, ISR or delay is used. TPM0 is reserved for this
+output; the RGB pins remain GPIO, including the red pin which has an unused
+alternate TPM0 channel 4 function. Environmental beep requests and movement
+alarm latching remain separate integration work.
 This alarm follows the current condition and does not latch past incidents.
 The LED is off during each blink's off phase and while waiting for the initial
 door-state event without access. Door movement does not reset the green blink.
@@ -103,7 +136,7 @@ mode to allow the potentiometer output to settle.
 
 `ControlTask` (priority 3) receives direction, submit and door events through an
 event queue and owns the passcode, authorization, door and alarm states. It is
-the sole runtime writer of the RGB outputs. A queue wait of at most 50 ms allows
+the sole runtime writer of the RGB and buzzer outputs. A queue wait of at most 50 ms allows
 it to check grant expiry and blink timing even without input; blinking never
 adds a blocking delay or an extra task. Producers block if
 the queue is full rather than silently losing characters. `MonitorTask`

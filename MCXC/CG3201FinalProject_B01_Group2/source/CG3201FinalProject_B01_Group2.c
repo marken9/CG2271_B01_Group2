@@ -86,6 +86,11 @@
 #define INPUT_QUEUE_LENGTH  16U
 #define ALARM_BLINK_HALF_MS 250U  /* 250 ms color on, 250 ms off. */
 
+/* KY-006 passive buzzer: S -> D10 / PTD4 / J2 pin 6 (ALT4 TPM0_CH4). */
+#define BUZZER_PIN          4U
+#define BUZZER_CHANNEL      4U
+#define BUZZER_TONE_HZ      2000U
+
 /* ---------- Sensor Settings ---------- */
 
 /* Magnet near: LOW = lid closed. Magnet away: HIGH = lid open. */
@@ -226,6 +231,8 @@ static bool ADC_Read(uint8_t channel, uint16_t *value);
 static void JoystickButton_Init(void);
 static void RGB_Init(void);
 static void RGB_Write(uint8_t colors);
+static void Buzzer_Init(void);
+static void Buzzer_Set(bool on);
 
 #if ENABLE_MCX_DHT
 static void DHT_Init(void);
@@ -318,6 +325,30 @@ static void RGB_Init(void) {
     PORTD->PCR[BOARD_LED_GREEN_GPIO_PIN] = PORT_PCR_MUX(1U);
     GPIOE->PDDR |= (1UL << BOARD_LED_RED_GPIO_PIN) | (1UL << BOARD_LED_BLUE_GPIO_PIN);
     GPIOD->PDDR |= (1UL << BOARD_LED_GREEN_GPIO_PIN);
+}
+
+/* TPM0 is reserved for the buzzer; RGB pins remain GPIO outputs. */
+static void Buzzer_Init(void) {
+    CLOCK_EnableClock(kCLOCK_PortD);
+    CLOCK_EnableClock(kCLOCK_Tpm0);
+    GPIOD->PCOR = 1UL << BUZZER_PIN;
+    GPIOD->PDDR |= 1UL << BUZZER_PIN;
+    PORTD->PCR[BUZZER_PIN] = PORT_PCR_MUX(1U);
+
+    /* Boot clocks already enable MCGIRCLK at 8 MHz. Preserve UART selectors. */
+    SIM->SOPT2 = (SIM->SOPT2 & ~SIM_SOPT2_TPMSRC_MASK) | SIM_SOPT2_TPMSRC(3U);
+    TPM0->SC = 0U;
+    TPM0->CNT = 0U;
+    TPM0->MOD = CLOCK_GetFreq(kCLOCK_McgInternalRefClk) / 8U / BUZZER_TONE_HZ - 1U;
+    TPM0->CONTROLS[BUZZER_CHANNEL].CnSC = TPM_CnSC_MSB_MASK | TPM_CnSC_ELSB_MASK;
+    TPM0->CONTROLS[BUZZER_CHANNEL].CnV = 0U;
+    TPM0->SC = TPM_SC_PS(3U) | TPM_SC_CMOD(1U); /* /8, edge-aligned PWM, no IRQ. */
+    PORTD->PCR[BUZZER_PIN] = PORT_PCR_MUX(4U);
+}
+
+/* Only ControlTask calls this after initialization. Zero duty is silent. */
+static void Buzzer_Set(bool on) {
+    TPM0->CONTROLS[BUZZER_CHANNEL].CnV = on ? (TPM0->MOD + 1U) / 2U : 0U;
 }
 
 static void RGB_Write(uint8_t colors) {
@@ -843,6 +874,8 @@ static void ControlTask(void *params) {
         uint8_t colors = Alarm_Update(&alarm, doorValid, doorOpen, granted,
                                       (uint32_t)now, (uint32_t)pdMS_TO_TICKS(ALARM_BLINK_HALF_MS));
         RGB_Write(colors);
+        /* Sound throughout the alarm, including the red LED's OFF phase. */
+        Buzzer_Set(alarm.state == ALARM_UNAUTHORIZED_OPEN);
 
         /* Person 4: read ESP climate BEFORE taking dataMutex, so this task
          * never holds two mutexes at once. RG_MCX_GetESP already marks
@@ -1132,6 +1165,7 @@ int main(void) {
     Reed_Init();
     JoystickButton_Init();
     RGB_Init();
+    Buzzer_Init();
 
     if (!ADC_Init()) {
         PRINTF("ERROR: ADC calibration failed\r\n");
