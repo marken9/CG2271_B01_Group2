@@ -70,9 +70,17 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #define RG_UPLINK_STACK     10240U
 // Same priority as loop(): the UART task (priority 2) always preempts it.
 #define RG_UPLINK_PRIORITY  1U
+// AlarmState value from alarm.h on the MCX
+#define RG_ALARM_DISARMED   4U
 
 static WiFiClientSecure tls;
 static HTTPClient http;
+
+// A dashboard arm/disarm command: the server's id and, once known, its result.
+// Only uplinkTask touches these.
+static uint32_t commandId = 0;
+static bool commandResultReady = false;
+static int commandResult = 0;
 
 static bool ensureWifi(void)
 {
@@ -108,6 +116,7 @@ static void buildJson(char *out, size_t size)
     char humidity[12] = "null";
     char light[8] = "null";
     const char *lidOpen = "null";
+    const char *armed = "null";
 
     if (dhtValid) {
         snprintf(temperature, sizeof(temperature), "%.1f", dht.temperatureX10 / 10.0f);
@@ -116,6 +125,7 @@ static void buildJson(char *out, size_t size)
 
     // stateValid is false when the MCX link is down or its status is > 1.5 s old
     if (mcx.stateValid) {
+        armed = mcx.alarm == RG_ALARM_DISARMED ? "false" : "true";
         if (mcx.lightValid) {
             snprintf(light, sizeof(light), "%u", (unsigned int)mcx.lightPercent);
         }
@@ -124,16 +134,42 @@ static void buildJson(char *out, size_t size)
         }
     }
 
+    char result[56] = "";
+    if (commandResultReady) {
+        snprintf(result, sizeof(result), ",\"commandResult\":{\"id\":%lu,\"result\":%d}",
+                 (unsigned long)commandId, commandResult);
+    }
+
     snprintf(out, size,
-             "{\"temperature\":%s,\"humidity\":%s,\"light\":%s,\"lidOpen\":%s}",
-             temperature, humidity, light, lidOpen);
+             "{\"temperature\":%s,\"humidity\":%s,\"light\":%s,\"lidOpen\":%s,\"armed\":%s%s}",
+             temperature, humidity, light, lidOpen, armed, result);
 }
 
-static void postReading(const char *body)
+// Hand a command from the server to the MCX, which checks the code. The reply
+// reads "D <id> <0 disarm | 1 arm> <four of UDLR>". Never log it: it holds the code.
+static void startCommand(const String &reply)
+{
+    unsigned long id = 0;
+    unsigned int arm = 0;
+    char moves[5] = "";
+
+    if (sscanf(reply.c_str(), "D %lu %u %4[UDLR]", &id, &arm, moves) != 3 ||
+        arm > 1U || strlen(moves) != 4U) {
+        Serial.println("[UPLINK] Ignored a malformed command");
+        return;
+    }
+
+    commandId = id;
+    commandResultReady = !RG_ESP_SubmitArmCode(arm == 1U, moves);
+    commandResult = -3;  // only reported if it couldn't be queued
+}
+
+// True if the server took the reading. A pending command comes back in reply.
+static bool postReading(const char *body, String *reply)
 {
     if (!http.begin(tls, RG_INGEST_URL)) {
         Serial.println("[UPLINK] Bad RG_INGEST_URL");
-        return;
+        return false;
     }
 
     http.addHeader("Content-Type", "application/json");
@@ -141,7 +177,11 @@ static void postReading(const char *body)
 
     int status = http.POST((uint8_t *)body, strlen(body));
 
-    if (status == 204) {
+    bool accepted = status == 200 || status == 204;
+
+    if (status == 200) {
+        *reply = http.getString();
+    } else if (status == 204) {
 #if RG_UPLINK_DEBUG
         Serial.printf("[UPLINK] Sent %s\n", body);
 #endif
@@ -153,6 +193,7 @@ static void postReading(const char *body)
 
     // Keeps the TLS connection open for the next POST when it can
     http.end();
+    return accepted;
 }
 
 static void uplinkTask(void *)
@@ -162,11 +203,28 @@ static void uplinkTask(void *)
     for (;;) {
         uint32_t now = millis();
 
+        RG_CommandResult result;
+        if (RG_ESP_TakeArmResult(&result) && commandId != 0U) {
+            commandResult = result.result;
+            commandResultReady = true;
+        }
+
         if ((uint32_t)(now - lastSend) >= RG_UPLINK_SEND_MS && ensureWifi()) {
             lastSend = now;
-            char body[128];
+            char body[192];
+            bool reporting = commandResultReady;
+            String reply;
             buildJson(body, sizeof(body));
-            postReading(body);
+            if (postReading(body, &reply)) {
+                // Keep an unreported result until the server has really taken it.
+                if (reporting) {
+                    commandResultReady = false;
+                    commandId = 0;
+                }
+                if (reply.length() > 0U) {
+                    startCommand(reply);
+                }
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(100));

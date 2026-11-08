@@ -5,6 +5,8 @@
  *   GET  /healthz        health check for Render and the keep-alive pinger
  *   POST /api/readings   one reading from the ESP32 (Bearer INGEST_TOKEN)
  *   GET  /api/stream     Server-Sent Events: a snapshot, then each new reading
+ *   GET  /api/arm        the online arm/disarm lockout state
+ *   POST /api/arm        relay an arm code to the box and wait for its answer
  *
  * Environment: PORT, INGEST_TOKEN (required to accept readings), and
  * optionally DATABASE_URL (Postgres, e.g. Supabase) to keep history across
@@ -36,7 +38,7 @@ const READING_LIMITS = {
   humidity: [0, 100],
   light: [0, 200_000],
 };
-const READING_FLAGS = ["lidOpen"];
+const READING_FLAGS = ["lidOpen", "armed"];
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -178,12 +180,152 @@ function parseReading(body) {
     }
     reading[field] = value;
   }
-  return { reading };
+
+  const commandResult = data.commandResult ?? null;
+  if (commandResult !== null && !(Number.isInteger(commandResult.id) && Number.isInteger(commandResult.result))) {
+    return { error: "commandResult must have integer id and result" };
+  }
+  return { reading, commandResult };
 }
 
 function broadcast(type, payload) {
   const message = `event: ${type}\ndata: ${JSON.stringify({ now: Date.now(), ...payload })}\n\n`;
   for (const res of streams) res.write(message);
+}
+
+/* ---------- Arming and disarming from the dashboard ----------
+ * The server only relays the code; the MCXC checks it, and the code is never
+ * stored, logged or put on the public stream. The code space is small (256),
+ * so wrong codes lock this route out. The joystick is unaffected. */
+
+const ARM_CODE = /^[UDLR]{4}$/;
+const ARM_DELIVERY_MS = 10_000; // how long the ESP32 has to collect a command
+const ARM_CONFIRM_MS = 15_000; // then how long the box has to confirm it
+const ARM_MAX_WRONG = 5;
+const ARM_LOCK_MS = 15 * 60_000; // the first lockout; each one after doubles
+const ARM_LOCK_MAX_MS = 24 * 60 * 60_000;
+
+/* Results the ESP32 reports back (rg_protocol.h, rg_esp_uart.h). */
+const RESULT_APPLIED = 0;
+const RESULT_WRONG_CODE = 5;
+const RESULT_NOT_SENT = -3;
+
+const ARM_STATUS = { applied: 200, wrong: 403, busy: 409, locked: 429, rejected: 502, offline: 503, unknown: 504 };
+
+/* One at a time: { id, target, code (null once collected), accepted, res, timer }. */
+let armCommand = null;
+let nextCommandId = Math.floor(Date.now() / 1000); // doesn't repeat across restarts
+
+function armStatus(now = Date.now()) {
+  const guard = store.armGuard;
+  return { lockedForMs: Math.max(0, guard.lockedUntil - now), attemptsLeft: ARM_MAX_WRONG - guard.wrong };
+}
+
+function finishArm(outcome) {
+  const { res, timer } = armCommand;
+  armCommand = null;
+  clearTimeout(timer);
+  sendJson(res, ARM_STATUS[outcome], { outcome, ...armStatus() });
+}
+
+/* Returns the events to announce. */
+function recordWrongCode(now) {
+  const guard = store.armGuard;
+  const events = [store.logEvent(now, "system", "breach", "Wrong alarm code entered")];
+  guard.wrong++;
+  if (guard.wrong >= ARM_MAX_WRONG) {
+    const lockMs = Math.min(ARM_LOCK_MS * 2 ** guard.lockouts, ARM_LOCK_MAX_MS);
+    guard.wrong = 0;
+    guard.lockouts++;
+    guard.lockedUntil = now + lockMs;
+    events.push(store.logEvent(now, "system", "breach", `Online alarm control locked for ${lockMs / 60_000} min`));
+  }
+  store.saveArmGuard();
+  return events;
+}
+
+/* The ESP32's answer for a command it collected. Returns the events to announce. */
+function applyCommandResult({ id, result }) {
+  if (armCommand?.id !== id || armCommand.code !== null) return [];
+  if (result === RESULT_APPLIED) {
+    armCommand.accepted = true;
+    return [];
+  }
+  if (result === RESULT_WRONG_CODE) {
+    const events = recordWrongCode(Date.now());
+    finishArm("wrong");
+    return events;
+  }
+  finishArm(result === RESULT_NOT_SENT ? "offline" : result > 0 ? "rejected" : "unknown");
+  return [];
+}
+
+/* Success is only reported once the box's own status shows the new state. */
+function confirmArm(reading) {
+  if (!armCommand?.accepted || reading.armed !== (armCommand.target === "arm")) return;
+  const guard = store.armGuard;
+  if (guard.wrong || guard.lockouts) {
+    Object.assign(guard, { wrong: 0, lockouts: 0, lockedUntil: 0 });
+    store.saveArmGuard();
+  }
+  finishArm("applied");
+}
+
+/* The reply to a reading carries a waiting command, once and never again. */
+function collectCommand() {
+  if (!armCommand || armCommand.code === null) return null;
+  const { id, target, code } = armCommand;
+  armCommand.code = null;
+  clearTimeout(armCommand.timer);
+  armCommand.timer = setTimeout(() => finishArm("unknown"), ARM_CONFIRM_MS);
+  return `D ${id} ${target === "arm" ? 1 : 0} ${code}\n`;
+}
+
+function handleArmStatus(req, res) {
+  sendJson(res, 200, armStatus());
+}
+
+async function handleArmAttempt(req, res) {
+  /* A cross-site page can't send JSON here without a preflight, which this server refuses. */
+  if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
+    sendJson(res, 415, { error: "Send JSON" });
+    return;
+  }
+
+  let data;
+  try {
+    data = JSON.parse(await readBody(req));
+  } catch (error) {
+    sendJson(res, error.status ?? 400, { error: "Body must be JSON" });
+    return;
+  }
+  if (typeof data?.code !== "string" || !ARM_CODE.test(data.code) || !["arm", "disarm"].includes(data.target)) {
+    sendJson(res, 400, { error: "Send a four-move code and a target of arm or disarm" });
+    return;
+  }
+
+  const status = armStatus();
+  if (status.lockedForMs > 0) {
+    sendJson(res, ARM_STATUS.locked, { outcome: "locked", ...status });
+    return;
+  }
+  if (armCommand) {
+    sendJson(res, ARM_STATUS.busy, { outcome: "busy", ...status });
+    return;
+  }
+  if (!boardOnline || store.latest?.armed == null) {
+    sendJson(res, ARM_STATUS.offline, { outcome: "offline", ...status });
+    return;
+  }
+
+  armCommand = {
+    id: nextCommandId++,
+    target: data.target,
+    code: data.code,
+    accepted: false,
+    res,
+    timer: setTimeout(() => finishArm("offline"), ARM_DELIVERY_MS),
+  };
 }
 
 async function handleReading(req, res) {
@@ -204,7 +346,7 @@ async function handleReading(req, res) {
     return;
   }
 
-  const { reading, error } = parseReading(body);
+  const { reading, commandResult, error } = parseReading(body);
   if (error) {
     sendJson(res, 400, { error });
     return;
@@ -212,8 +354,13 @@ async function handleReading(req, res) {
 
   const { sample, events } = store.add(reading);
   boardOnline = true;
+  if (commandResult) events.push(...applyCommandResult(commandResult));
+  confirmArm(reading);
   broadcast("sample", { sample, events, boardOnline });
-  sendJson(res, 204);
+
+  const command = collectCommand();
+  if (command) send(res, 200, command, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+  else sendJson(res, 204);
 }
 
 function handleStream(req, res) {
@@ -272,6 +419,7 @@ const ROUTES = {
   },
   "/api/readings": { POST: handleReading },
   "/api/stream": { GET: handleStream },
+  "/api/arm": { GET: handleArmStatus, POST: handleArmAttempt },
 };
 
 const server = createServer(async (req, res) => {

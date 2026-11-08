@@ -32,6 +32,7 @@
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
     <symbol id="i-caution" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5"/><path d="M12 17.5h.01"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
   </svg>
 
   <a class="skip-link" href="#overview">Skip to Readings</a>
@@ -58,6 +59,7 @@
             <span id="feed-label">Connecting…</span>
             <time class="fig" id="updated-at" hidden></time>
           </p>
+          <button class="btn" type="button" id="arm-toggle" aria-disabled="true">Disarm</button>
           <button class="btn-invert" type="button" id="ack-all" aria-disabled="true"><span id="ack-label">Acknowledge</span></button>
         </div>
       </header>
@@ -66,7 +68,6 @@
         <section class="panel" aria-labelledby="lanes-title">
           <div class="panel-head">
             <h2 id="lanes-title">Lid and Climate</h2>
-            <span class="meta">5-minute averages</span>
             <div class="timescale" id="timescale" role="radiogroup" aria-label="Time range">
               <label><input type="radio" name="timescale" value="auto" checked /><span>Auto</span></label>
               <label><input type="radio" name="timescale" value="30m" /><span>30 min</span></label>
@@ -179,6 +180,29 @@
         <button class="btn btn-primary" type="submit" value="save">Save Limits</button>
       </footer>
     </form>
+  </dialog>
+
+  <dialog class="sheet sheet-narrow" id="arm-dialog" aria-labelledby="arm-title">
+    <form method="dialog">
+      <header class="sheet-head">
+        <h2 id="arm-title">Disarm the alarm</h2>
+        <button class="btn-icon" type="submit" value="close" aria-label="Close">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </header>
+    </form>
+    <div class="sheet-body arm-body">
+      <p class="arm-message" id="arm-message" role="status"></p>
+      <div class="arm-dots" id="arm-dots" role="img" aria-label="0 of 4 moves entered"><i></i><i></i><i></i><i></i></div>
+      <div class="arm-pad">
+        <button class="arm-key" type="button" data-move="U" aria-label="Up"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+        <button class="arm-key" type="button" data-move="L" aria-label="Left"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+        <button class="arm-key arm-ok" type="button" id="arm-ok" aria-disabled="true">OK</button>
+        <button class="arm-key" type="button" data-move="R" aria-label="Right"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+        <button class="arm-key" type="button" data-move="D" aria-label="Down"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+      </div>
+      <button class="btn btn-quiet" type="button" id="arm-clear" aria-disabled="true">Clear</button>
+    </div>
   </dialog>
 
   <dialog class="sheet sheet-wide" id="history-dialog" aria-labelledby="history-title">

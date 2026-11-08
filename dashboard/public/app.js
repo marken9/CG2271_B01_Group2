@@ -1,4 +1,7 @@
 import { createLiveSource } from "./live-source.js";
+import { createArmPad } from "./arm-pad.js";
+
+const armPad = createArmPad();
 
 /* ============================================================
  * Configuration
@@ -901,6 +904,7 @@ function update() {
   renderVerdict(result, now);
   renderFeed(result);
   renderAckKey();
+  armPad.update({ armed: state.sample?.armed ?? null, live: result.feed === "live" });
   renderReadings(result);
   renderLid(result, now);
   renderLanes(result);
@@ -1042,84 +1046,6 @@ function animateList(list, keyOf) {
     before = snapshot();
   }).observe(list, { childList: true });
 }
-
-/* ---------- Overscroll stretch at the page's ends ----------
- * Scrolling a wheel or touchpad past the top or bottom stretches the content
- * towards that edge, like Android's overscroll. Wheel input moves a target that
- * is always relaxing, and a spring follows the target, so the stretch eases in
- * and out instead of stepping with each notch, and never sticks. Only the main
- * content stretches, inside .app's clip, so the page height can't change and the
- * rail stays still. Apple platforms and phones bounce natively, so this runs only
- * on Windows and Linux, only for wheel input, and never with reduced motion or a
- * dialog open. */
-const STRETCH_MAX = 0.15; // the content never stretches more than 15%
-const STRETCH_PER_PX = 0.0085; // how much of the way each pixel of wheel pushes the target
-const STRETCH_RELAX_S = 0.2; // how fast the target lets go
-const STRETCH_SPRING = 24; // rad/s; higher follows the target more tightly
-const STRETCH_DAMPING = 0.85;
-
-function overscrollStretch() {
-  const platform = navigator.userAgentData?.platform ?? navigator.platform ?? "";
-  if (/mac|iphone|ipad|ipod|android/i.test(platform) || /android/i.test(navigator.userAgent)) return;
-
-  const content = $(".canvas");
-  let target = 0; // where the wheel wants the stretch, 0..1 of STRETCH_MAX
-  let shown = 0; // where the spring has it
-  let velocity = 0;
-  let edge = null; // "top" or "bottom" while stretched
-  let frame = null;
-  let last = 0;
-
-  const rest = () => {
-    target = shown = velocity = 0;
-    edge = null;
-    frame = null;
-    content.style.transform = "";
-    content.style.transformOrigin = "";
-    content.style.willChange = "";
-  };
-
-  const step = (now) => {
-    const dt = Math.min(0.032, (now - last) / 1000);
-    last = now;
-    target *= Math.exp(-dt / STRETCH_RELAX_S);
-    velocity += (STRETCH_SPRING ** 2 * (target - shown) - 2 * STRETCH_DAMPING * STRETCH_SPRING * velocity) * dt;
-    shown = Math.max(0, shown + velocity * dt);
-    if (target < 0.001 && shown < 0.001 && Math.abs(velocity) < 0.01) {
-      rest();
-      return;
-    }
-    content.style.transform = `scaleY(${(1 + shown * STRETCH_MAX).toFixed(4)})`;
-    frame = requestAnimationFrame(step);
-  };
-
-  window.addEventListener(
-    "wheel",
-    (event) => {
-      if (event.ctrlKey || reducedMotion() || document.querySelector("dialog[open]")) return;
-      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
-      const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
-      const atTop = window.scrollY <= 0;
-      const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1;
-      const towards = delta < 0 && atTop ? "top" : delta > 0 && atBottom ? "bottom" : null;
-      /* Only past an end, and never flipping edges while a stretch is still easing out. */
-      if (!towards || (edge && edge !== towards)) return;
-
-      edge = towards;
-      /* Resistance only builds near the limit. */
-      target = Math.min(1, target + Math.abs(delta) * STRETCH_PER_PX * (1 - target * target));
-      content.style.transformOrigin = edge === "top" ? "50% 0" : "50% 100%";
-      if (!frame) {
-        content.style.willChange = "transform";
-        last = performance.now();
-        frame = requestAnimationFrame(step);
-      }
-    },
-    { passive: true },
-  );
-}
-
-overscrollStretch();
 
 /* Start once the first data has rendered, so nothing animates on page load.
  * Alarm rows keep their element while open; events are matched by their text. */

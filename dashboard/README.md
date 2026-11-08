@@ -50,7 +50,9 @@ curl -X POST http://localhost:3000/api/readings \
 
 | Route | |
 |---|---|
-| `POST /api/readings` | One reading, `Authorization: Bearer <INGEST_TOKEN>`. JSON fields `temperature` (°C), `humidity` (% RH), `light`, `lidOpen`; each may be `null` for "no valid reading". Returns 204. |
+| `POST /api/readings` | One reading, `Authorization: Bearer <INGEST_TOKEN>`. JSON fields `temperature` (°C), `humidity` (% RH), `light`, `lidOpen`, `armed`; each may be `null` for "no valid reading". Returns 204. |
+| `GET /api/arm` | The online arm/disarm lockout: `lockedForMs`, `attemptsLeft`. |
+| `POST /api/arm` | JSON `code` (four of `U`, `D`, `L`, `R`) and `target` (`arm` or `disarm`). Relayed to the box, which checks it; the reply says what happened. Five wrong codes lock this route for 15 minutes, doubling each time. |
 | `GET /api/stream` | Server-Sent Events: a `snapshot`, then `sample`, `status` and `history` messages. |
 | `GET /healthz` | `{ "ok": true }` |
 

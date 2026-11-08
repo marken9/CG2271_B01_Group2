@@ -13,7 +13,7 @@ extern "C" {
 #define RG_RETRY_MS 400U
 #define RG_MAX_ATTEMPTS 4U
 enum { RG_OK=0, RG_BAD_PAYLOAD=1, RG_UNSUPPORTED=2, RG_BUSY=3,
-       RG_OLD=4, RG_DEFER=255 };
+       RG_OLD=4, RG_WRONG_CODE=5, RG_DEFER=255 };
 typedef struct {
     uint32_t session, seq;
     char type;

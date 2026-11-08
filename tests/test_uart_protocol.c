@@ -55,6 +55,21 @@ int main(void) {
     hello(&l,200,2000,2000);assert(RG_Request(&l,'R',"30",2001));
     RG_Frame a={200,l.pending.seq,'A',"00000064,0"};
     RG_Receive(&l,&a,2002);assert(!l.pendingActive&&h.result==0);
+    /* Dashboard arm code: a reliable request, and the wrong-code result arrives. */
+    assert(RG_Request(&l,'D',"0,UUUU",2010));
+    a.seq=l.pending.seq;strcpy(a.payload,"00000064,5");
+    RG_Receive(&l,&a,2011);assert(!l.pendingActive&&h.result==RG_WRONG_CODE);
+    assert(RG_Request(&l,'D',"1,UUUU",2020));
+    a.seq=l.pending.seq;strcpy(a.payload,"00000064,6");
+    RG_Receive(&l,&a,2021);assert(l.pendingActive); /* results past the last known are ignored */
+    strcpy(a.payload,"00000064,0");RG_Receive(&l,&a,2022);assert(!l.pendingActive&&h.result==0);
+    {
+        Harness rx={0};RG_Link in;RG_LinkInit(&in,300,&rx,send,data,request,result);
+        hello(&in,400,100,100);
+        RG_Frame d={400,1,'D',"0,UUUU"};
+        RG_Receive(&in,&d,110);RG_Receive(&in,&d,120);
+        assert(rx.applied==1&&in.duplicates==1); /* a retry is never applied twice */
+    }
     assert(RG_Request(&l,'R',"30",2100));
     a.seq=l.pending.seq;strcpy(a.payload,"00000065,0");RG_Receive(&l,&a,2101);
     assert(l.pendingActive); /* wrong target session cannot ACK */

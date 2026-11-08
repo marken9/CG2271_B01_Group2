@@ -83,6 +83,7 @@
 html {
   -webkit-text-size-adjust: 100%;
   scrollbar-color: var(--control) var(--ground);
+  overscroll-behavior: none; /* no bounce at the ends of the page */
 }
 
 ::selection {
@@ -187,7 +188,6 @@ a {
   display: grid;
   grid-template-columns: 55px minmax(0, 1fr);
   min-height: 100dvh;
-  overflow: clip; /* the overscroll stretch must not make the page taller */
 }
 
 .rail {
@@ -435,6 +435,7 @@ a {
 .timescale {
   display: flex;
   align-self: center;
+  margin-left: auto;
 }
 
 .timescale label {
@@ -1437,6 +1438,117 @@ a {
   }
 }
 
+/* ---------- Online arm and disarm ---------- */
+
+.title-actions .btn {
+  min-height: 34px;
+}
+
+.btn[aria-disabled="true"],
+.arm-key[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.btn[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.btn[aria-disabled="true"]:active,
+.arm-key[aria-disabled="true"]:active {
+  transform: none;
+}
+
+.sheet-narrow {
+  width: min(340px, calc(100vw - 32px));
+}
+
+.arm-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.arm-message {
+  min-height: 40px;
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.arm-message[data-tone="positive"] {
+  color: var(--positive);
+}
+
+.arm-message[data-tone="negative"] {
+  color: var(--negative);
+}
+
+.arm-message[data-tone="warning"] {
+  color: var(--warning);
+}
+
+.arm-dots {
+  display: flex;
+  gap: 12px;
+}
+
+.arm-dots i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--control);
+}
+
+.arm-dots i[data-on] {
+  background: var(--text);
+  box-shadow: none;
+}
+
+.arm-pad {
+  display: grid;
+  grid-template-areas: ". up ." "left ok right" ". down .";
+  grid-template-columns: repeat(3, 64px);
+  grid-auto-rows: 64px;
+  gap: 8px;
+}
+
+.arm-key {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--control);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms var(--ease-out), transform 120ms var(--ease-out);
+}
+
+.arm-key:active {
+  transform: scale(0.96);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .arm-key:not([aria-disabled="true"]):hover {
+    background: var(--raised);
+  }
+}
+
+.arm-key[data-move="U"] { grid-area: up; }
+.arm-key[data-move="L"] { grid-area: left; }
+.arm-key[data-move="R"] { grid-area: right; }
+.arm-key[data-move="D"] { grid-area: down; }
+.arm-ok { grid-area: ok; }
+
+.arm-key[data-move="L"] .icon { transform: rotate(-90deg); }
+.arm-key[data-move="R"] .icon { transform: rotate(90deg); }
+.arm-key[data-move="D"] .icon { transform: rotate(180deg); }
+
 /* ---------- Motion and forced colours ---------- */
 
 /* Touch: comfortable targets, and inputs large enough that iOS won't zoom. */
@@ -1446,6 +1558,7 @@ a {
   }
 
   .btn,
+  .title-actions .btn,
   .threshold input {
     min-height: 44px;
   }
@@ -1548,6 +1661,10 @@ a {
 }
 
 @media (forced-colors: active) {
+  .arm-dots i[data-on] {
+    background: CanvasText;
+  }
+
   .timescale input:checked + span {
     background: Highlight;
     color: HighlightText;

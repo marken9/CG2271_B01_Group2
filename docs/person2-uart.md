@@ -85,16 +85,17 @@ bytes. CRLF is accepted as well as LF. Unknown types do not update liveness.
 | V | ESP -> MCX, every 250 ms | `valid,moving` current motion state |
 | M | ESP -> MCX, reliable | `1,1` qualifying movement event |
 | R | ESP -> MCX, reliable | `30` request 30-second access |
+| D | ESP -> MCX, reliable | `target,moves`: 0 disarm or 1 arm, then four of U/D/L/R. The MCX checks them against the arm code |
 | L | ESP -> MCX, reliable | `tempLowX10,tempHighX10,humidityLowX10,humidityHighX10,lightHighPercent,exposureLimit` |
 | A | Both, response | `originalSenderSessionHex,result`; header sequence echoes request sequence |
 
 Alarm values currently match alarm.h: 0 waiting, 1 door closed, 2 access
-granted, 3 unauthorised open. Keep these stable or update both sides together.
+granted, 3 unauthorised open, 4 disarmed. Keep these stable or update both sides together.
 Warnings and exposure currently have validity=false. They are **unavailable**,
 not normal. Light percentage is an uncalibrated ADC percentage at present.
 
 Results: 0 processed/applied, 1 bad payload, 2 unsupported, 3 busy, 4 old/reused
-sequence. One reliable request may be outstanding per direction. Retry after
+sequence, 5 wrong code (D only). One reliable request may be outstanding per direction. Retry after
 400 ms, at most **4 total transmissions** (initial + 3 retries). A duplicate
 receives its cached ACK; an in-progress duplicate is not executed again. Old
 sequences are rejected. Application effects happen in ControlTask before ACK.

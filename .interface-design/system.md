@@ -46,6 +46,11 @@ so digits stack; text is Public Sans. Colour goes on data and status only.
    Recent Events (5 rows, "All events (n)" opens History), Sensors (DHT11, photoresistor, reed
    switch, ESP32 uplink, each with its state).
 
+5. **Arm and disarm:** a quiet button beside Acknowledge ("Disarm", or "Arm" when disarmed) opens a
+   narrow dialog with a D-pad: four arrows and a centre OK, like the joystick, plus arrow keys. Four dots
+   count the moves and never show them. The box checks the code and only its own reported state counts
+   as success. Five wrong codes lock this for 15 minutes, doubling each time; the joystick still works.
+
 ## Motion
 
 Minimal and purposeful; nothing animates on page load, numbers and charts never animate, and
@@ -62,11 +67,7 @@ nothing loops. Curve: `--ease-out` (cubic-bezier(0.23, 1, 0.32, 1)); rows use a 
 - **Dialogs:** fade and rise in (200ms), fade out (150ms), backdrop with them.
 - **Status colours** (feed, readings, finding, lid word) ease over 240ms.
 - **Rail icons:** scale to 0.88 while pressed (120ms).
-- **Page ends:** scrolling a wheel or touchpad past the top or bottom stretches the main content
-  towards that edge (scaleY, at most 15%). A spring follows a target that is always relaxing, so it
-  eases in and out without stepping or sticking. Only the content moves, inside `.app`'s clip, so
-  the page height doesn't change and the rail stays still. Windows and Linux only: macOS, iOS and
-  Android already do this natively.
+- **Page ends:** no bounce or stretch; the browser's own overscroll is turned off too.
 - **Reduced motion:** fades only; no ring, slides, drops or height easing.
 
 Prototype with on/off switches for each: `design-demos/motion/`.

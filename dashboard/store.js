@@ -47,6 +47,16 @@ const SCHEMA = `
   -- Not exposed through Supabase's Data API; RLS as a second guard.
   alter table relicguard.readings_minute enable row level security;
   alter table relicguard.events enable row level security;
+
+  -- The online arm/disarm lockout, so a restart doesn't reset it. One row.
+  create table if not exists relicguard.arm_guard (
+    id integer primary key default 1 check (id = 1),
+    wrong integer not null,
+    lockouts integer not null,
+    locked_until timestamptz
+  );
+
+  alter table relicguard.arm_guard enable row level security;
 `;
 
 function emptyMinute(t) {
@@ -90,6 +100,9 @@ export function createStore({ databaseUrl, onError = console.error } = {}) {
   const security = {
     lid: { on: null, since: null },
   };
+  let armed = null; // last reported armed state; null until the first report
+  /* Wrong codes since the last lockout, lockouts so far, when the current one ends (ms). */
+  const armGuard = { wrong: 0, lockouts: 0, lockedUntil: 0 };
 
   async function query(text, values) {
     if (!pool) return null;
@@ -126,6 +139,13 @@ export function createStore({ databaseUrl, onError = console.error } = {}) {
       [MAX_EVENTS],
     );
     events.push(...recent.rows.map((row) => ({ at: row.at.getTime(), kind: row.kind, text: row.text })));
+
+    const guard = await pool.query("select wrong, lockouts, locked_until from relicguard.arm_guard where id = 1");
+    if (guard.rows[0]) {
+      armGuard.wrong = guard.rows[0].wrong;
+      armGuard.lockouts = guard.rows[0].lockouts;
+      armGuard.lockedUntil = guard.rows[0].locked_until?.getTime() ?? 0;
+    }
 
     /* Carry the open/tripped state across restarts so it isn't logged twice. */
     const last = await pool.query(
@@ -178,6 +198,15 @@ export function createStore({ databaseUrl, onError = console.error } = {}) {
     return event;
   }
 
+  function saveArmGuard() {
+    return query(
+      `insert into relicguard.arm_guard (id, wrong, lockouts, locked_until) values (1, $1, $2, $3)
+       on conflict (id) do update set wrong = excluded.wrong,
+         lockouts = excluded.lockouts, locked_until = excluded.locked_until`,
+      [armGuard.wrong, armGuard.lockouts, armGuard.lockedUntil ? new Date(armGuard.lockedUntil) : null],
+    );
+  }
+
   /* Record a validated reading. Returns the stored sample and any new events. */
   function add(reading, now = Date.now()) {
     const minuteStart = Math.floor(now / MINUTE_MS) * MINUTE_MS;
@@ -193,7 +222,21 @@ export function createStore({ databaseUrl, onError = console.error } = {}) {
     }
 
     const newEvents = [];
+    if (reading.armed != null) {
+      if (armed !== null && reading.armed !== armed) {
+        newEvents.push(logEvent(now, "system", "info", reading.armed ? "Alarm armed" : "Alarm disarmed"));
+      }
+      armed = reading.armed;
+    }
+
     for (const [subject, { field, on, off }] of Object.entries(SECURITY)) {
+      /* Lid movement is expected while disarmed. Forgetting the state means
+       * arming with the lid open logs a fresh breach. */
+      if (reading.armed === false) {
+        security[subject] = { on: null, since: null };
+        continue;
+      }
+
       const value = reading[field];
       const state = security[subject];
       if (value == null || value === state.on) continue;
@@ -257,6 +300,9 @@ export function createStore({ databaseUrl, onError = console.error } = {}) {
     add,
     tick,
     history,
+    logEvent,
+    armGuard,
+    saveArmGuard,
     close,
     get latest() {
       return latest;
