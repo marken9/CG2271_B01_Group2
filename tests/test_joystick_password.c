@@ -56,6 +56,37 @@ int main(void)
     assert(!Password_Check(&entry)); /* Same directions, wrong order. */
     Password_Reset(&entry);
     assert(entry.length == 0 && !entry.overflow);
+    /* The arm code is separate from the access passcode. */
+    Password_Append(&entry, JOY_RIGHT);
+    Password_Append(&entry, JOY_LEFT);
+    Password_Append(&entry, JOY_DOWN);
+    assert(!Password_CheckArmCode(&entry)); /* Incomplete. */
+    Password_Append(&entry, JOY_UP);
+    assert(Password_CheckArmCode(&entry));
+    assert(!Password_Check(&entry));
+    Password_Append(&entry, JOY_UP);
+    assert(!Password_CheckArmCode(&entry)); /* Correct prefix must not be accepted. */
+    Password_Reset(&entry);
+    Password_Append(&entry, JOY_UP);
+    Password_Append(&entry, JOY_DOWN);
+    Password_Append(&entry, JOY_LEFT);
+    Password_Append(&entry, JOY_RIGHT);
+    assert(!Password_CheckArmCode(&entry)); /* The access passcode does not arm. */
+    Password_Reset(&entry);
+    /* Dashboard requests: "<0 disarm | 1 arm>,<four moves>". */
+    bool arm = true;
+    assert(Password_ParseRemote("0,RLDU", &entry, &arm));
+    assert(!arm && Password_CheckArmCode(&entry) && !Password_Check(&entry));
+    assert(Password_ParseRemote("1,RLDU", &entry, &arm) && arm);
+    assert(Password_ParseRemote("0,UDLR", &entry, &arm));
+    assert(!Password_CheckArmCode(&entry)); /* The access passcode does not disarm. */
+    assert(!Password_ParseRemote("0,RLD", &entry, &arm));   /* Too short. */
+    assert(!Password_ParseRemote("0,RLDUU", &entry, &arm)); /* Too long. */
+    assert(!Password_ParseRemote("0,RLDX", &entry, &arm));  /* Not a move. */
+    assert(!Password_ParseRemote("2,RLDU", &entry, &arm));  /* Not a state. */
+    assert(!Password_ParseRemote("0RLDU", &entry, &arm));
+    assert(!Password_ParseRemote("", &entry, &arm));
+    Password_Reset(&entry);
     puts("Joystick filtering and passcode tests passed.");
     return 0;
 }

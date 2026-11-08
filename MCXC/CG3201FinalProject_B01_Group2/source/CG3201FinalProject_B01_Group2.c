@@ -150,7 +150,7 @@
 
 typedef enum {
     ENTRY_IDLE, ENTRY_TYPING, ENTRY_ACCEPTED, ENTRY_REJECTED,
-    ENTRY_EXPIRED, ENTRY_TOO_LONG, ENTRY_ACCESS_ENDED
+    ENTRY_EXPIRED, ENTRY_TOO_LONG, ENTRY_ACCESS_ENDED, ENTRY_ARMED, ENTRY_DISARMED
 } EntryStatus;
 
 typedef enum { EVENT_DIRECTION, EVENT_SUBMIT, EVENT_INPUT_FAULT, EVENT_DOOR_CHANGED } InputEventType;
@@ -796,6 +796,7 @@ static void ControlTask(void *params) {
     EntryStatus status = ENTRY_IDLE;
     TickType_t lastInput = 0U, acceptedAt = 0U;
     bool granted = false;
+    bool armed = true; /* Fail secure: every reset starts armed. */
     bool doorValid = false, doorOpen = false;
     TickType_t lastPublish = 0;
     Alarm alarm = {0};
@@ -836,6 +837,20 @@ static void ControlTask(void *params) {
                 } else {
                     result = RG_BAD_PAYLOAD;
                 }
+            } else if (request.type == 'D') {
+                /* From the dashboard. The code is checked here, and the request
+                 * names the state it wants, so it can't toggle twice. Only the
+                 * arm code works: the access passcode is never tried. */
+                PasswordEntry remote;
+                bool arm;
+                if (!Password_ParseRemote(request.payload, &remote, &arm)) {
+                    result = RG_BAD_PAYLOAD;
+                } else if (!Password_CheckArmCode(&remote)) {
+                    result = RG_WRONG_CODE;
+                } else {
+                    armed = arm;
+                    status = armed ? ENTRY_ARMED : ENTRY_DISARMED;
+                }
             } else if (request.type == 'M') {
                 g_rgMotionEventCount++;
                 /* PERSON 1 INTEGRATION POINT:
@@ -860,9 +875,15 @@ static void ControlTask(void *params) {
             } else if (event.type == EVENT_SUBMIT) {
                 /* Empty button presses do not overwrite the last result. */
                 if (entry.length != 0U) {
-                    granted = Password_Check(&entry);
-                    status = granted ? ENTRY_ACCEPTED : ENTRY_REJECTED;
-                    if (granted) acceptedAt = now;
+                    if (Password_CheckArmCode(&entry)) {
+                        /* Leaves any running access grant untouched. */
+                        armed = !armed;
+                        status = armed ? ENTRY_ARMED : ENTRY_DISARMED;
+                    } else {
+                        granted = Password_Check(&entry);
+                        status = granted ? ENTRY_ACCEPTED : ENTRY_REJECTED;
+                        if (granted) acceptedAt = now;
+                    }
                     Password_Reset(&entry);
                 }
             } else {
@@ -871,7 +892,7 @@ static void ControlTask(void *params) {
                 status = ENTRY_REJECTED;
             }
         }
-        uint8_t colors = Alarm_Update(&alarm, doorValid, doorOpen, granted,
+        uint8_t colors = Alarm_Update(&alarm, armed, doorValid, doorOpen, granted,
                                       (uint32_t)now, (uint32_t)pdMS_TO_TICKS(ALARM_BLINK_HALF_MS));
         RGB_Write(colors);
         /* Sound throughout the alarm, including the red LED's OFF phase. */
@@ -1024,7 +1045,8 @@ static void MonitorTask(void *params) {
 
         static const char *const entryNames[] = {
             "READY", "ENTERING", "ACCEPTED", "REJECTED",
-            "ENTRY TIMED OUT", "TOO MANY DIRECTIONS - PRESS TO CLEAR", "ACCESS EXPIRED"
+            "ENTRY TIMED OUT", "TOO MANY DIRECTIONS - PRESS TO CLEAR", "ACCESS EXPIRED",
+            "ARMED", "DISARMED"
         };
         PRINTF("Joystick X: %u | Y: %u | %s | %s\r\n",
                (unsigned)snapshot.joystickX, (unsigned)snapshot.joystickY,
