@@ -187,6 +187,7 @@ a {
   display: grid;
   grid-template-columns: 55px minmax(0, 1fr);
   min-height: 100dvh;
+  overflow: clip; /* the overscroll stretch must not make the page taller */
 }
 
 .rail {

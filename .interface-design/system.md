@@ -59,9 +59,10 @@ nothing loops. Curve: `--ease-out` (cubic-bezier(0.23, 1, 0.32, 1)); rows use a 
 - **Dialogs:** fade and rise in (200ms), fade out (150ms), backdrop with them.
 - **Status colours** (feed, readings, finding, lid word) ease over 240ms.
 - **Rail icons:** scale to 0.88 while pressed (120ms).
-- **Page ends:** scrolling a wheel or touchpad past the top or bottom stretches the page towards
-  that edge (scaleY, about 5% for one notch, at most 8%, with resistance), relaxing back every frame so it never
-  sticks; it eases out in under half a second once input stops. Windows and Linux only: macOS, iOS and
+- **Page ends:** scrolling a wheel or touchpad past the top or bottom stretches the main content
+  towards that edge (scaleY, at most 15%). A spring follows a target that is always relaxing, so it
+  eases in and out without stepping or sticking. Only the content moves, inside `.app`'s clip, so
+  the page height doesn't change and the rail stays still. Windows and Linux only: macOS, iOS and
   Android already do this natively.
 - **Reduced motion:** fades only; no ring, slides, drops or height easing.
 

@@ -994,45 +994,53 @@ function animateList(list, keyOf) {
 }
 
 /* ---------- Overscroll stretch at the page's ends ----------
- * Scrolling a wheel or touchpad past the top or bottom stretches the page a
- * little towards that edge, like Android's overscroll, with resistance that
- * builds as you push. The stretch relaxes back every frame, so it never sticks:
- * while scrolling continues it holds a gentle stretch, and once input stops
- * (touchpad momentum included) it eases out in under half a second.
- * Apple platforms and phones bounce natively, so this runs only on Windows and
- * Linux, only for wheel input, and never with reduced motion or a dialog open. */
-const STRETCH_MAX = 0.08; // the page never stretches more than 8%
-const STRETCH_PER_PX = 0.006; // how much each pixel of wheel past the end adds
-const STRETCH_RELAX_MS = 140; // time constant of the ease back (95% gone in ~420ms)
+ * Scrolling a wheel or touchpad past the top or bottom stretches the content
+ * towards that edge, like Android's overscroll. Wheel input moves a target that
+ * is always relaxing, and a spring follows the target, so the stretch eases in
+ * and out instead of stepping with each notch, and never sticks. Only the main
+ * content stretches, inside .app's clip, so the page height can't change and the
+ * rail stays still. Apple platforms and phones bounce natively, so this runs only
+ * on Windows and Linux, only for wheel input, and never with reduced motion or a
+ * dialog open. */
+const STRETCH_MAX = 0.15; // the content never stretches more than 15%
+const STRETCH_PER_PX = 0.0085; // how much of the way each pixel of wheel pushes the target
+const STRETCH_RELAX_S = 0.2; // how fast the target lets go
+const STRETCH_SPRING = 24; // rad/s; higher follows the target more tightly
+const STRETCH_DAMPING = 0.85;
 
 function overscrollStretch() {
   const platform = navigator.userAgentData?.platform ?? navigator.platform ?? "";
   if (/mac|iphone|ipad|ipod|android/i.test(platform) || /android/i.test(navigator.userAgent)) return;
 
-  const page = $(".app");
-  let amount = 0; // 0..1 of STRETCH_MAX
+  const content = $(".canvas");
+  let target = 0; // where the wheel wants the stretch, 0..1 of STRETCH_MAX
+  let shown = 0; // where the spring has it
+  let velocity = 0;
   let edge = null; // "top" or "bottom" while stretched
   let frame = null;
   let last = 0;
 
-  const paint = () => {
-    if (amount < 0.002) {
-      amount = 0;
-      edge = null;
-      page.style.transform = "";
-      page.style.transformOrigin = "";
-      return;
-    }
-    page.style.transformOrigin = edge === "top" ? "50% 0" : "50% 100%";
-    page.style.transform = `scaleY(${(1 + amount * STRETCH_MAX).toFixed(5)})`;
+  const rest = () => {
+    target = shown = velocity = 0;
+    edge = null;
+    frame = null;
+    content.style.transform = "";
+    content.style.transformOrigin = "";
+    content.style.willChange = "";
   };
 
-  const relax = (now) => {
-    const dt = Math.min(64, now - last);
+  const step = (now) => {
+    const dt = Math.min(0.032, (now - last) / 1000);
     last = now;
-    amount *= Math.exp(-dt / STRETCH_RELAX_MS);
-    paint();
-    frame = amount ? requestAnimationFrame(relax) : null;
+    target *= Math.exp(-dt / STRETCH_RELAX_S);
+    velocity += (STRETCH_SPRING ** 2 * (target - shown) - 2 * STRETCH_DAMPING * STRETCH_SPRING * velocity) * dt;
+    shown = Math.max(0, shown + velocity * dt);
+    if (target < 0.001 && shown < 0.001 && Math.abs(velocity) < 0.01) {
+      rest();
+      return;
+    }
+    content.style.transform = `scaleY(${(1 + shown * STRETCH_MAX).toFixed(4)})`;
+    frame = requestAnimationFrame(step);
   };
 
   window.addEventListener(
@@ -1048,11 +1056,13 @@ function overscrollStretch() {
       if (!towards || (edge && edge !== towards)) return;
 
       edge = towards;
-      amount = Math.min(1, amount + Math.abs(delta) * STRETCH_PER_PX * (1 - amount));
-      paint();
+      /* Resistance only builds near the limit. */
+      target = Math.min(1, target + Math.abs(delta) * STRETCH_PER_PX * (1 - target * target));
+      content.style.transformOrigin = edge === "top" ? "50% 0" : "50% 100%";
       if (!frame) {
+        content.style.willChange = "transform";
         last = performance.now();
-        frame = requestAnimationFrame(relax);
+        frame = requestAnimationFrame(step);
       }
     },
     { passive: true },
