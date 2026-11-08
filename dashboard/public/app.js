@@ -232,9 +232,10 @@ function evaluate(sample, now, thresholds) {
   }
 
   const lidOpen = sample?.lidOpen ?? null;
+  const disarmed = sample?.armed === false;
 
   if (feed === "live") {
-    if (lidOpen === true) {
+    if (lidOpen === true && !disarmed) {
       conditions.push({
         key: "lid",
         severity: "breach",
@@ -252,7 +253,7 @@ function evaluate(sample, now, thresholds) {
         detail: "The reed switch has not reported a state.",
       });
     }
-  } else if (lidOpen === true) {
+  } else if (lidOpen === true && !disarmed) {
     /* The feed is down and the lid was last seen open: keep the alarm, even
      * after a reload, but say it can't be confirmed. */
     conditions.push({
@@ -266,7 +267,7 @@ function evaluate(sample, now, thresholds) {
     });
   }
 
-  return { feed, readings, lidOpen, conditions };
+  return { feed, readings, lidOpen, disarmed, conditions };
 }
 
 const RESOLVED_TEXT = {
@@ -404,6 +405,11 @@ function verdict(result, now) {
     };
   }
 
+  if (result.disarmed) {
+    const lidText = result.lidOpen == null ? "Lid state unknown" : `Lid ${result.lidOpen ? "open" : "closed"}`;
+    return { tone: "warning", text: "Alarm disarmed", detail: `${lidText} · lid not monitored` };
+  }
+
   const closedAt = lastEventAt("Lid closed");
   return { tone: "positive", text: "Cards sealed · all within limits", detail: closedAt ? `Lid closed since ${fmtShortTime(closedAt)}` : "Lid closed" };
 }
@@ -469,7 +475,10 @@ function renderLid(result, now) {
   const label = $("#lid-label");
   const live = result.feed === "live";
   let view;
-  if (live && result.lidOpen === true) {
+  if (live && result.disarmed) {
+    const lidText = result.lidOpen == null ? "" : `Lid ${result.lidOpen ? "open" : "closed"}`;
+    view = { state: "disarmed", text: "Disarmed", sub: lidText };
+  } else if (live && result.lidOpen === true) {
     const alert = state.alerts.get("lid");
     view = { state: "breach", text: "Open", sub: alert ? `Open for ${fmtDuration(now - alert.since)}` : "" };
   } else if (live && result.lidOpen === false) {
@@ -504,6 +513,8 @@ $("#lid-label").addEventListener("animationend", (event) => {
 const PLOT_RIGHT = 40; // the y-tick lane on the right of every plot; the lid lane keeps it too
 const TRACK_HEIGHT = 120;
 const HOUR = 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const MIN_WINDOW_MS = 30 * MINUTE;
 
 /* The lid's open periods inside the window, from the event log. */
 function lidSpans(result, t0, t1) {
@@ -603,15 +614,15 @@ function drawTrack(plot, metric, points, reading, { t0, t1 }) {
   }
 
   let d = "";
-  let pen = false;
-  for (const p of points) {
-    if (p.v == null) {
-      pen = false;
-      continue;
-    }
-    d += `${pen ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`;
-    pen = true;
-  }
+  points.forEach((p, i) => {
+    if (p.v == null) return;
+    const px = x(p.t).toFixed(1);
+    const py = y(p.v).toFixed(1);
+    const joined = points[i - 1]?.v != null;
+    /* A reading with no neighbour has nothing to join to, so it's drawn as a dot. */
+    if (!joined && points[i + 1]?.v == null) d += `M${Math.max(1, px - 1.25)},${py}a1.25,1.25 0 1,0 2.5,0a1.25,1.25 0 1,0 -2.5,0`;
+    else d += `${joined ? "L" : "M"}${px},${py}`;
+  });
   const stale = status === "stale";
   out += `<path class="t-line"${stale ? " data-stale" : ""} d="${d}"/>`;
   /* Red only on the part of the line outside the limits. */
@@ -693,8 +704,9 @@ function drawAxis(row, { t0, t1 }) {
   if (!w) return;
   const x1 = w - PLOT_RIGHT;
   let out = `<svg viewBox="0 0 ${w} 16" height="16">`;
-  /* Every hour where there's room for the labels, every two hours on a phone. */
-  const step = (x1 / ((t1 - t0) / HOUR) < 56 ? 2 : 1) * HOUR;
+  /* The finest round interval that leaves room for the labels. */
+  const perMs = x1 / (t1 - t0 || 1);
+  const step = [5, 10, 15, 30, 60].map((m) => m * MINUTE).find((ms) => ms * perMs >= 56) ?? 2 * HOUR;
   for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) {
     const at = ((t - t0) / (t1 - t0 || 1)) * x1;
     const anchor = at < 24 ? "start" : at > x1 - 20 ? "end" : "middle";
@@ -705,6 +717,13 @@ function drawAxis(row, { t0, t1 }) {
 
 let lanesKey = "";
 
+/* The lanes run from the first data to now, at least 30 minutes and at most the
+ * full six hours, so a box that has just come online isn't a sliver at the edge. */
+function laneWindow(histories, { t0, t1 }) {
+  const starts = Object.values(histories).map((points) => points.find((p) => p.v != null)?.t ?? t1);
+  return { t0: Math.max(t0, Math.min(t1 - MIN_WINDOW_MS, ...starts)), t1 };
+}
+
 function renderLanes(result) {
   const width = $("#axis").clientWidth;
   const key = `${state.sample?.receivedAt}|${result.feed}|${source.historyStamp}|${state.eventsVersion}|${JSON.stringify(state.thresholds)}|${width}|${result.lidOpen}`;
@@ -712,7 +731,9 @@ function renderLanes(result) {
   lanesKey = key;
 
   const histories = Object.fromEntries(Object.keys(METRICS).map((metric) => [metric, source.history(metric)]));
-  const scale = { t0: histories.temperature[0].t, t1: histories.temperature.at(-1).t };
+  const fullWindow = { t0: histories.temperature[0].t, t1: histories.temperature.at(-1).t };
+  const scale = laneWindow(histories, fullWindow);
+  setText($("#lanes-span"), `Last ${scale.t0 === fullWindow.t0 ? "6 hours" : fmtAgo(scale.t1 - scale.t0)} · 5-minute averages`);
   for (const metric of Object.keys(METRICS)) {
     const points = histories[metric];
     if (result.readings[metric].status === "missing") points.at(-1).v = null;
@@ -721,7 +742,7 @@ function renderLanes(result) {
   const coverage = lidCoverage(histories.light, result);
   drawLidLane($("#lid-plot"), result, scale, coverage);
   drawAxis($("#axis"), scale);
-  renderLidSummary(result, scale, coverage);
+  renderLidSummary(result, fullWindow, coverage);
 }
 
 /* How long the lid was open, over only the time there's data for. */

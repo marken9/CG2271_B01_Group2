@@ -37,8 +37,9 @@ so digits stack; text is Public Sans. Colour goes on data and status only.
    note) beside each plot. The lid lane is a green track with red blocks for openings, labelled
    with time and duration; labels that would collide fall back to the time or are dropped.
    Tracks: a 2px line (red only where it is out of limits, grey when stale), the safe band between the
-   limits in a faint green, the limits dashed, round ticks on a 40px lane at the right. Hour
-   labels run underneath.
+   limits in a faint green, the limits dashed, round ticks on a 40px lane at the right; a reading with no
+   neighbour is a dot. Time labels run underneath. The shared axis starts at the first data (at
+   least 30 minutes, at most 6 hours), so a box that has just come online isn't a sliver at the edge.
 4. **Right column (400px):** Alarms (rows, then lid-open time and count over the last 6 h),
    Recent Events (5 rows, "All events (n)" opens History), Sensors (DHT11, photoresistor, reed
    switch, ESP32 uplink, each with its state).
