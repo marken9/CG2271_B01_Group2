@@ -38,8 +38,10 @@ so digits stack; text is Public Sans. Colour goes on data and status only.
    with time and duration; labels that would collide fall back to the time or are dropped.
    Tracks: a 2px line (red only where it is out of limits, grey when stale), the safe band between the
    limits in a faint green, the limits dashed, round ticks on a 40px lane at the right; a reading with no
-   neighbour is a dot. Time labels run underneath. The shared axis starts at the first data (at
-   least 30 minutes, at most 6 hours), so a box that has just come online isn't a sliver at the edge.
+   neighbour is a dot. Time labels run underneath. A row of radios above the lanes sets the shared
+   time range: Auto (the default, from the first data to now, at least 30 minutes, at most 6 hours, so a
+   box that has just come online isn't a sliver at the edge), 30 min, 1 h, 3 h or 6 h. The choice is
+   saved in `localStorage` under `relicguard.timescale`.
 4. **Right column (400px):** Alarms (rows, then lid-open time and count over the last 6 h),
    Recent Events (5 rows, "All events (n)" opens History), Sensors (DHT11, photoresistor, reed
    switch, ESP32 uplink, each with its state).

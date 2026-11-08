@@ -22,6 +22,7 @@ const STALE_AFTER_MS = 10_000;
 
 const THRESHOLDS_KEY = "relicguard.thresholds.v2";
 const THEME_KEY = "relicguard.theme";
+const TIMESCALE_KEY = "relicguard.timescale";
 const MAX_EVENTS = 50;
 const VISIBLE_EVENTS = 5;
 
@@ -532,7 +533,7 @@ function lidSpans(result, t0, t1) {
     /* Still open: runs to now while live, or to the last reading if the feed is down. */
     spans.push({ from: open ?? state.alerts.get("lid")?.since ?? t1, to: result.feed === "live" ? null : state.sample.receivedAt, ongoing: true });
   }
-  return spans.filter((span) => (span.to ?? t1) >= t0).map((span) => ({ ...span, from: Math.max(span.from, t0) }));
+  return spans.filter((span) => (span.to ?? t1) >= t0).map((span) => ({ ...span, started: span.from, from: Math.max(span.from, t0) }));
 }
 
 /* Stretches this page has itself watched the lid reporting, which covers the
@@ -688,8 +689,9 @@ function drawLidLane(plot, result, { t0, t1 }, coverage) {
     const b = Math.max(x(span.to ?? t1), a + 3);
     root.append(svg("rect", { class: "s-block", x: a, y: laneTop, width: b - a, height: laneHeight }));
     const anchor = a > w - 150 ? "end" : "start";
-    const full = span.ongoing ? `Open since ${fmtShortTime(span.from)}` : `${fmtShortTime(span.from)} · ${fmtDuration(span.to - span.from)}`;
-    tag(full, anchor === "end" ? b : a, anchor) || tag(fmtShortTime(span.from), anchor === "end" ? b : a, anchor);
+    /* Labels give the real opening time, even if it's before the visible range. */
+    const full = span.ongoing ? `Open since ${fmtShortTime(span.started)}` : `${fmtShortTime(span.started)} · ${fmtDuration(span.to - span.started)}`;
+    tag(full, anchor === "end" ? b : a, anchor) || tag(fmtShortTime(span.started), anchor === "end" ? b : a, anchor);
   }
 
   for (const gap of gaps) {
@@ -717,27 +719,54 @@ function drawAxis(row, { t0, t1 }) {
 
 let lanesKey = "";
 
-/* The lanes run from the first data to now, at least 30 minutes and at most the
- * full six hours, so a box that has just come online isn't a sliver at the edge. */
+/* The time ranges offered above the lanes, besides "auto". */
+const TIMESCALES = { "30m": 30 * MINUTE, "1h": HOUR, "3h": 3 * HOUR, "6h": 6 * HOUR };
+
+function loadTimescale() {
+  try {
+    const stored = localStorage.getItem(TIMESCALE_KEY);
+    return Object.hasOwn(TIMESCALES, stored) ? stored : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+let timescale = loadTimescale();
+
+/* The range the lanes show. Auto runs from the first data to now, at least 30
+ * minutes and at most six hours, so a box that has just come online isn't a
+ * sliver at the edge. */
 function laneWindow(histories, { t0, t1 }) {
+  if (timescale !== "auto") return { t0: Math.max(t0, t1 - TIMESCALES[timescale]), t1 };
   const starts = Object.values(histories).map((points) => points.find((p) => p.v != null)?.t ?? t1);
   return { t0: Math.max(t0, Math.min(t1 - MIN_WINDOW_MS, ...starts)), t1 };
 }
 
+/* The points from t0 on, starting exactly at t0 if a line crosses into the range. */
+function pointsFrom(points, t0) {
+  const i = points.findIndex((p) => p.t >= t0);
+  const before = points[i - 1];
+  const after = points[i];
+  const kept = points.slice(i);
+  if (before?.v != null && after.v != null && after.t > t0) {
+    kept.unshift({ t: t0, v: before.v + ((after.v - before.v) * (t0 - before.t)) / (after.t - before.t) });
+  }
+  return kept;
+}
+
 function renderLanes(result) {
   const width = $("#axis").clientWidth;
-  const key = `${state.sample?.receivedAt}|${result.feed}|${source.historyStamp}|${state.eventsVersion}|${JSON.stringify(state.thresholds)}|${width}|${result.lidOpen}`;
+  const key = `${state.sample?.receivedAt}|${result.feed}|${source.historyStamp}|${state.eventsVersion}|${JSON.stringify(state.thresholds)}|${width}|${result.lidOpen}|${timescale}`;
   if (key === lanesKey) return;
   lanesKey = key;
 
   const histories = Object.fromEntries(Object.keys(METRICS).map((metric) => [metric, source.history(metric)]));
   const fullWindow = { t0: histories.temperature[0].t, t1: histories.temperature.at(-1).t };
   const scale = laneWindow(histories, fullWindow);
-  setText($("#lanes-span"), `Last ${scale.t0 === fullWindow.t0 ? "6 hours" : fmtAgo(scale.t1 - scale.t0)} · 5-minute averages`);
   for (const metric of Object.keys(METRICS)) {
     const points = histories[metric];
     if (result.readings[metric].status === "missing") points.at(-1).v = null;
-    drawTrack($(`[data-track="${metric}"]`), metric, points, result.readings[metric], scale);
+    drawTrack($(`[data-track="${metric}"]`), metric, pointsFrom(points, scale.t0), result.readings[metric], scale);
   }
   const coverage = lidCoverage(histories.light, result);
   drawLidLane($("#lid-plot"), result, scale, coverage);
@@ -794,7 +823,7 @@ function noAlarmsRow() {
   const li = el("li");
   li.dataset.key = "none";
   const note = el("p", "none");
-  note.append(el("b", null, "None open"), "Lid closed and readings within limits.");
+  note.append(el("b", null, "None open"), "Nothing needs attention.");
   li.append(note);
   return li;
 }
@@ -1102,6 +1131,17 @@ function animateListsOnce() {
   animateList($("#alarm-list"), (li) => li.dataset.key ?? li.textContent);
   animateList($("#event-list"), (li) => li.textContent);
 }
+
+$(`#timescale input[value="${timescale}"]`).checked = true;
+$("#timescale").addEventListener("change", (event) => {
+  timescale = event.target.value;
+  try {
+    localStorage.setItem(TIMESCALE_KEY, timescale);
+  } catch {
+    /* Not remembered; still applied for this visit. */
+  }
+  if (state.result) renderLanes(state.result);
+});
 
 /* Redraw the plots when their width changes. */
 new ResizeObserver(() => {

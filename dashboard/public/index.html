@@ -66,7 +66,14 @@
         <section class="panel" aria-labelledby="lanes-title">
           <div class="panel-head">
             <h2 id="lanes-title">Lid and Climate</h2>
-            <span class="meta" id="lanes-span">Last 6 hours · 5-minute averages</span>
+            <span class="meta">5-minute averages</span>
+            <div class="timescale" id="timescale" role="radiogroup" aria-label="Time range">
+              <label><input type="radio" name="timescale" value="auto" checked /><span>Auto</span></label>
+              <label><input type="radio" name="timescale" value="30m" /><span>30 min</span></label>
+              <label><input type="radio" name="timescale" value="1h" /><span>1 h</span></label>
+              <label><input type="radio" name="timescale" value="3h" /><span>3 h</span></label>
+              <label><input type="radio" name="timescale" value="6h" /><span>6 h</span></label>
+            </div>
           </div>
           <div class="lanes" id="lanes">
             <div class="lane-label lid-label" id="lid-label" data-state="unknown">
