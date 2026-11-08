@@ -215,10 +215,10 @@ function evaluate(sample, now, thresholds) {
       const direction = status === "high" ? "above" : "below";
       conditions.push({
         key: metric,
-        severity: "caution",
+        severity: "limit",
         title: `${meta.label} ${direction} limit`,
         band: `${meta.label} ${status} · ${direction} ${status === "high" ? range.max : range.min}`,
-        detail: `Reading ${fmtValue(metric, value)}\u00A0${meta.unit}. Limits are ${fmtRange(metric, range)}.`,
+        detail: `Limits are ${fmtRange(metric, range)}.`,
       });
     } else if (status === "missing" && feed === "live") {
       conditions.push({
@@ -252,6 +252,18 @@ function evaluate(sample, now, thresholds) {
         detail: "The reed switch has not reported a state.",
       });
     }
+  } else if (lidOpen === true) {
+    /* The feed is down and the lid was last seen open: keep the alarm, even
+     * after a reload, but say it can't be confirmed. */
+    conditions.push({
+      key: "lid",
+      severity: "breach",
+      title: "Lid open",
+      band: "Lid open",
+      detail: "The lid was open in the last reading. Its state now is unknown.",
+      since: sample.lidOpenSince ?? sample.receivedAt,
+      unconfirmed: true,
+    });
   }
 
   return { feed, readings, lidOpen, conditions };
@@ -274,7 +286,7 @@ function reconcile(result, now) {
 
     if (!existing) {
       const since = condition.since ?? now;
-      state.alerts.set(condition.key, { ...condition, since, ackAt: null, unconfirmed: false });
+      state.alerts.set(condition.key, { unconfirmed: false, ...condition, since, ackAt: null });
       if (pageLogs(condition.key, condition.severity)) logEvent(since, condition.severity, condition.title);
       continue;
     }
@@ -284,7 +296,7 @@ function reconcile(result, now) {
     }
 
     const { since, ...rest } = condition;
-    Object.assign(existing, rest, { unconfirmed: false });
+    Object.assign(existing, { unconfirmed: false }, rest);
   }
 
   for (const [key, alert] of state.alerts) {
@@ -303,7 +315,7 @@ function reconcile(result, now) {
 }
 
 function sortedAlerts() {
-  const rank = (a) => (a.severity === "breach" ? 0 : a.key === "feed" ? 1 : a.severity === "caution" ? 2 : 3);
+  const rank = (a) => (a.severity === "breach" ? 0 : a.severity === "limit" ? 1 : a.key === "feed" ? 2 : 3);
   return [...state.alerts.values()].sort((a, b) => rank(a) - rank(b) || a.since - b.since);
 }
 
@@ -344,38 +356,66 @@ function lastEventAt(text) {
 
 /* ---------- Title row ---------- */
 
-/* The screen's one finding, in the line under the title. */
-function finding(result, now) {
-  if (!state.sample) return { tone: "warning", text: "Waiting for the first reading from the showcase." };
+/* One alarm as a short line, with its reading where it has one. */
+function alarmLine(alert, result) {
+  const since = fmtShortTime(alert.since);
+  if (alert.key === "lid") return alert.severity === "breach" ? `Lid open since ${since}` : `No lid state since ${since}`;
+  const meta = METRICS[alert.key];
+  const { value, status, range } = result.readings[alert.key];
+  if (status === "high") return `${meta.label} ${fmtValue(alert.key, value)}\u00A0${meta.unit}, above ${fmtLimit(range.max)} since ${since}`;
+  if (status === "low") return `${meta.label} ${fmtValue(alert.key, value)}\u00A0${meta.unit}, below ${fmtLimit(range.min)} since ${since}`;
+  return `${meta.label}: no valid reading since ${since}`;
+}
+
+/* The screen's answer: are the cards safe? A headline, then one line of why. */
+function verdict(result, now) {
+  const sample = state.sample;
+  if (!sample) return { tone: "warning", text: "Waiting for the first reading", detail: "Nothing has arrived from the showcase yet." };
+
+  const lastSeen = result.lidOpen == null ? "lid state unknown" : `lid last seen ${result.lidOpen ? "open" : "closed"}`;
   if (result.feed === "offline") {
     return {
       tone: "warning",
-      text: `No data since ${fmtShortTime(state.sample.receivedAt)}. Last known: lid ${result.lidOpen ? "open" : "closed"}.`,
+      text: `Disconnected · ${lastSeen}`,
+      detail: `No data since ${fmtShortTime(sample.receivedAt)}. Check the ESP32's power and Wi-Fi.`,
     };
   }
-  if (result.feed === "stale") return { tone: "warning", text: `No new data for ${fmtAgo(now - state.sample.receivedAt)}.` };
+  if (result.feed === "stale") {
+    return { tone: "warning", text: `Data stale · ${lastSeen}`, detail: `No new data for ${fmtAgo(now - sample.receivedAt)}.` };
+  }
 
-  const parts = sortedAlerts()
-    .filter((alert) => alert.key !== "feed")
-    .map((alert) => {
-      if (alert.key === "lid") return alert.severity === "breach" ? `Lid open since ${fmtShortTime(alert.since)}` : "Lid state unknown";
-      const meta = METRICS[alert.key];
-      const { status, range } = result.readings[alert.key];
-      if (status === "high") return `${meta.label} above ${fmtLimit(range.max)} ${meta.unit} since ${fmtShortTime(alert.since)}`;
-      if (status === "low") return `${meta.label} below ${fmtLimit(range.min)} ${meta.unit} since ${fmtShortTime(alert.since)}`;
-      return `${meta.label} has no valid reading`;
-    });
-  if (parts.length) return { tone: result.lidOpen ? "negative" : "warning", text: parts.join(" · ") };
+  const alerts = sortedAlerts().filter((alert) => alert.key !== "feed");
+  if (alerts.length) {
+    const lid = alerts.some((alert) => alert.key === "lid" && alert.severity === "breach");
+    const limits = alerts.filter((alert) => alert.severity === "limit");
+    const faults = alerts.filter((alert) => alert.severity === "fault");
+    const readings = `${limits.length} ${limits.length === 1 ? "reading" : "readings"} out of limits`;
+
+    let text;
+    if (lid) text = limits.length ? `Lid open · ${readings}` : "Lid open";
+    else if (limits.length) text = limits.length === 1 ? limits[0].title : readings;
+    else text = faults.length === 1 ? faults[0].title : `${faults.length} sensors not reporting`;
+
+    const more = alerts.length - 1;
+    return {
+      tone: lid || limits.length ? "negative" : "warning",
+      text,
+      detail: `${alarmLine(alerts[0], result)}${more ? ` · +${more} more` : ""}`,
+    };
+  }
 
   const closedAt = lastEventAt("Lid closed");
-  return { tone: "", text: `Lid closed${closedAt ? ` since ${fmtShortTime(closedAt)}` : ""}. All readings within limits.` };
+  return { tone: "positive", text: "Cards sealed · all within limits", detail: closedAt ? `Lid closed since ${fmtShortTime(closedAt)}` : "Lid closed" };
 }
 
-function renderFinding(result, now) {
-  const line = $("#finding");
-  const { tone, text } = finding(result, now);
-  line.dataset.tone = tone;
-  setText(line, text);
+function renderVerdict(result, now) {
+  const { tone, text, detail } = verdict(result, now);
+  const headline = $("#verdict");
+  headline.dataset.tone = tone;
+  setText(headline, text);
+  setText($("#finding"), detail);
+  const title = `${text} · RelicGuard`;
+  if (document.title !== title) document.title = title;
 }
 
 const FEED_LABEL = { live: "Live", stale: "Stale", offline: "Disconnected" };
@@ -392,6 +432,8 @@ function renderFeed(result) {
 }
 
 function unacknowledgedAlerts() {
+  /* Before any data has arrived there is nothing to have seen yet. */
+  if (!state.sample) return [];
   return sortedAlerts().filter((a) => a.ackAt == null);
 }
 
@@ -418,7 +460,7 @@ function renderReadings(result) {
     const { value, status, range } = result.readings[metric];
     label.dataset.state = status;
     setText($('[data-field="value"]', label), value == null ? "—" : fmtValue(metric, value));
-    setText($('[data-field="limits"]', label), `${fmtLimit(range.min)}–${fmtLimit(range.max)} ${meta.unit}`);
+    setText($('[data-field="limits"]', label), `${fmtLimit(range.min)}\u2060–\u2060${fmtLimit(range.max)}\u00A0${meta.unit}`);
     setText($('[data-field="status"]', label), READING_NOTE[status](range));
   }
 }
@@ -475,17 +517,52 @@ function lidSpans(result, t0, t1) {
       open = null;
     }
   }
-  if (result.lidOpen === true) spans.push({ from: open ?? state.alerts.get("lid")?.since ?? t1, to: null });
+  if (result.lidOpen === true) {
+    /* Still open: runs to now while live, or to the last reading if the feed is down. */
+    spans.push({ from: open ?? state.alerts.get("lid")?.since ?? t1, to: result.feed === "live" ? null : state.sample.receivedAt, ongoing: true });
+  }
   return spans.filter((span) => (span.to ?? t1) >= t0).map((span) => ({ ...span, from: Math.max(span.from, t0) }));
 }
 
-/* Three to five round ticks that cover the limits and the data. */
+/* Stretches this page has itself watched the lid reporting, which covers the
+ * minutes the server's history hasn't caught up with yet. */
+const lidSeen = [];
+
+function noteLidSeen(result) {
+  if (result.feed !== "live" || result.lidOpen === null) return;
+  const at = state.sample.receivedAt;
+  const last = lidSeen.at(-1);
+  if (last && at - last.to < STALE_AFTER_MS) last.to = at;
+  else lidSeen.push({ from: at, to: at });
+}
+
+/* Stretches of the window where the lid's state is known. The server keeps no
+ * lid history, but the lid and light both come from the MCXC's status frames,
+ * so light's history says when the MCXC was reporting. */
+function lidCoverage(points, result) {
+  let knownUntil = state.sample?.receivedAt ?? -Infinity;
+  if (result.lidOpen === null) knownUntil = Math.min(knownUntil, points.at(-2).t);
+  const t0 = points[0].t;
+  const stretches = lidSeen.map((seen) => ({ from: Math.max(seen.from, t0), to: seen.to }));
+  for (let i = 0; i < points.length - 1; i++) {
+    if (points[i].v != null) stretches.push({ from: points[i].t, to: Math.min(points[i + 1].t, knownUntil) });
+  }
+  const merged = [];
+  for (const stretch of stretches.filter((s) => s.to > s.from).sort((a, b) => a.from - b.from)) {
+    const last = merged.at(-1);
+    if (last && last.to >= stretch.from) last.to = Math.max(last.to, stretch.to);
+    else merged.push({ ...stretch });
+  }
+  return merged;
+}
+
+/* Round ticks that always reach past both the limits and the data. */
 function niceTicks(lo, hi) {
-  const raw = (hi - lo || 1) / 3;
+  const raw = (hi - lo || 1) / 4;
   const mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 5, 10].map((m) => m * mag).find((m) => m >= raw);
-  const ticks = [];
-  for (let v = Math.floor(lo / step) * step; v < hi + step / 2; v += step) ticks.push(+v.toFixed(6));
+  const ticks = [+(Math.floor(lo / step) * step).toFixed(6)];
+  while (ticks.at(-1) < hi) ticks.push(+(ticks.at(-1) + step).toFixed(6));
   return ticks;
 }
 
@@ -535,8 +612,13 @@ function drawTrack(plot, metric, points, reading, { t0, t1 }) {
     d += `${pen ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`;
     pen = true;
   }
-  const flag = status === "high" || status === "low" ? " data-over" : status === "stale" ? " data-stale" : "";
-  out += `<path class="t-line"${flag} d="${d}"/>`;
+  const stale = status === "stale";
+  out += `<path class="t-line"${stale ? " data-stale" : ""} d="${d}"/>`;
+  /* Red only on the part of the line outside the limits. */
+  if (!stale) {
+    out += `<clipPath id="out-${metric}"><rect x="0" y="0" width="${w}" height="${bandTop}"/><rect x="0" y="${bandBottom}" width="${w}" height="${Math.max(0, TRACK_HEIGHT - bandBottom)}"/></clipPath>`;
+    out += `<path class="t-line t-line-out" clip-path="url(#out-${metric})" d="${d}"/>`;
+  }
 
   const lastValid = points.findLastIndex((p) => p.v != null);
   if (lastValid < points.length - 1) {
@@ -546,8 +628,9 @@ function drawTrack(plot, metric, points, reading, { t0, t1 }) {
   plot.innerHTML = `${out}</svg>`;
 }
 
-/* The lid lane: a green track while closed, a red block for each opening. */
-function drawLidLane(plot, result, { t0, t1 }) {
+/* The lid lane: a green track where the lid is known, a red block for each
+ * opening, and a hatched gap wherever there's no data to say either way. */
+function drawLidLane(plot, result, { t0, t1 }, coverage) {
   const w = plot.clientWidth;
   if (!w) return;
   const x1 = w - PLOT_RIGHT;
@@ -559,7 +642,17 @@ function drawLidLane(plot, result, { t0, t1 }) {
   const root = svg("svg", { viewBox: `0 0 ${w} ${h}`, height: h });
   root.innerHTML = hatch("hatch-lid");
   plot.replaceChildren(root);
-  root.append(svg("line", { class: "s-track", x1: 0, x2: x1, y1: laneTop + laneHeight / 2, y2: laneTop + laneHeight / 2 }));
+  const gaps = [];
+  let cursor = t0;
+  for (const known of coverage) {
+    if (known.from > cursor) gaps.push({ from: cursor, to: known.from });
+    root.append(svg("line", { class: "s-track", x1: x(known.from), x2: x(known.to), y1: laneTop + laneHeight / 2, y2: laneTop + laneHeight / 2 }));
+    cursor = known.to;
+  }
+  if (cursor < t1) gaps.push({ from: cursor, to: t1 });
+  for (const gap of gaps) {
+    root.append(svg("rect", { x: x(gap.from), y: laneTop, width: Math.max(0, x(gap.to) - x(gap.from)), height: laneHeight, fill: "url(#hatch-lid)" }));
+  }
 
   /* Labels never collide: the opening still in progress is placed first; a
    * later label that would touch one falls back to its time, or is dropped. */
@@ -578,20 +671,20 @@ function drawLidLane(plot, result, { t0, t1 }) {
     return true;
   };
 
-  if (result.feed !== "live" && state.sample) {
-    const gx = x(state.sample.receivedAt);
-    root.append(svg("rect", { x: gx, y: laneTop, width: Math.max(0, x1 - gx), height: laneHeight, fill: "url(#hatch-lid)" }));
-    tag("no data", x1, "end", true);
-  }
-
-  const spans = lidSpans(result, t0, t1).sort((a, b) => (a.to == null ? -1 : b.to == null ? 1 : 0));
+  const spans = lidSpans(result, t0, t1).sort((a, b) => (a.ongoing ? -1 : b.ongoing ? 1 : 0));
   for (const span of spans) {
     const a = x(span.from);
     const b = Math.max(x(span.to ?? t1), a + 3);
     root.append(svg("rect", { class: "s-block", x: a, y: laneTop, width: b - a, height: laneHeight }));
     const anchor = a > w - 150 ? "end" : "start";
-    const full = span.to == null ? `Open since ${fmtShortTime(span.from)}` : `${fmtShortTime(span.from)} · ${fmtDuration(span.to - span.from)}`;
+    const full = span.ongoing ? `Open since ${fmtShortTime(span.from)}` : `${fmtShortTime(span.from)} · ${fmtDuration(span.to - span.from)}`;
     tag(full, anchor === "end" ? b : a, anchor) || tag(fmtShortTime(span.from), anchor === "end" ? b : a, anchor);
+  }
+
+  for (const gap of gaps) {
+    if (x(gap.to) - x(gap.from) < 60) continue;
+    if (gap.to >= t1) tag("no data", x1, "end", true);
+    else tag("no data", x(gap.from), "start", true);
   }
 }
 
@@ -625,20 +718,24 @@ function renderLanes(result) {
     if (result.readings[metric].status === "missing") points.at(-1).v = null;
     drawTrack($(`[data-track="${metric}"]`), metric, points, result.readings[metric], scale);
   }
-  drawLidLane($("#lid-plot"), result, scale);
+  const coverage = lidCoverage(histories.light, result);
+  drawLidLane($("#lid-plot"), result, scale, coverage);
   drawAxis($("#axis"), scale);
-  renderLidSummary(result, scale);
+  renderLidSummary(result, scale, coverage);
 }
 
-/* How long the lid was open in the window, beside the alarms. */
-function renderLidSummary(result, { t0, t1 }) {
+/* How long the lid was open, over only the time there's data for. */
+function renderLidSummary(result, { t0, t1 }, coverage) {
   const spans = lidSpans(result, t0, t1);
+  const covered = coverage.reduce((sum, known) => sum + (known.to - known.from), 0);
+  const known = covered > 0 || spans.length > 0;
   const openMs = spans.reduce((sum, span) => sum + ((span.to ?? t1) - span.from), 0);
-  renderOnce($("#lid-today"), [fmtDuration(openMs), spans.length], ([open, count]) => [
-    el("dt", null, "Lid open, last 6 h"),
+  const span = !known || covered >= t1 - t0 - 10 * 60 * 1000 ? "last 6 h" : `in ${fmtAgo(covered)} of data`;
+  renderOnce($("#lid-today"), [span, known ? fmtDuration(openMs) : "—", known ? String(spans.length) : "—"], ([window, open, count]) => [
+    el("dt", null, `Lid open, ${window}`),
     el("dd", "fig", open),
-    el("dt", null, "Times opened, last 6 h"),
-    el("dd", "fig", String(count)),
+    el("dt", null, `Times opened, ${window}`),
+    el("dd", "fig", count),
   ]);
 }
 
@@ -647,10 +744,11 @@ function renderLidSummary(result, { t0, t1 }) {
 function renderAlarms() {
   const alerts = sortedAlerts();
   setText($("#alarm-count"), `${alerts.length} open`);
+  $(".cols").toggleAttribute("data-alarming", alerts.length > 0);
   const items = alerts.map((a) => ({
     severity: a.severity,
     title: a.title,
-    sub: `${a.ackAt != null ? `Acknowledged ${fmtShortTime(a.ackAt)} · stays until it clears` : "Not acknowledged"}${a.unconfirmed ? " · unconfirmed" : ""}`,
+    sub: `${a.ackAt != null ? `Acknowledged here ${fmtShortTime(a.ackAt)} · stays until it clears` : "Not acknowledged"}${a.unconfirmed ? " · can't confirm, feed down" : ""}`,
     since: fmtShortTime(a.since),
     detail: a.detail,
   }));
@@ -749,7 +847,8 @@ function update() {
   state.result = result;
 
   reconcile(result, now);
-  renderFinding(result, now);
+  noteLidSeen(result);
+  renderVerdict(result, now);
   renderFeed(result);
   renderAckKey();
   renderReadings(result);
@@ -894,35 +993,46 @@ function animateList(list, keyOf) {
   }).observe(list, { childList: true });
 }
 
-/* ---------- Rubber band at the page's ends ----------
- * Scrolling a wheel or touchpad past the top or bottom pulls the page a little,
- * with resistance that grows the further it goes, then springs back. Apple
- * platforms and phones already do this natively, so it runs only on Windows and
+/* ---------- Overscroll stretch at the page's ends ----------
+ * Scrolling a wheel or touchpad past the top or bottom stretches the page a
+ * little towards that edge, like Android's overscroll, with resistance that
+ * builds as you push. The stretch relaxes back every frame, so it never sticks:
+ * while scrolling continues it holds a gentle stretch, and once input stops
+ * (touchpad momentum included) it eases out in under half a second.
+ * Apple platforms and phones bounce natively, so this runs only on Windows and
  * Linux, only for wheel input, and never with reduced motion or a dialog open. */
-const RUBBER_LIMIT = 64; // px the page can never pass, however hard it's pushed
-const RUBBER_RELEASE_MS = 120; // wheel silence that counts as letting go
+const STRETCH_MAX = 0.08; // the page never stretches more than 8%
+const STRETCH_PER_PX = 0.006; // how much each pixel of wheel past the end adds
+const STRETCH_RELAX_MS = 140; // time constant of the ease back (95% gone in ~420ms)
 
-function rubberBandScrolling() {
+function overscrollStretch() {
   const platform = navigator.userAgentData?.platform ?? navigator.platform ?? "";
   if (/mac|iphone|ipad|ipod|android/i.test(platform) || /android/i.test(navigator.userAgent)) return;
 
   const page = $(".app");
-  let pull = 0; // raw distance pushed past the end, signed (+ above the top)
-  let release = null;
+  let amount = 0; // 0..1 of STRETCH_MAX
+  let edge = null; // "top" or "bottom" while stretched
+  let frame = null;
+  let last = 0;
 
-  /* The rubber-band curve: easy at first, then ever stiffer, never past the limit. */
-  const offset = (distance) => Math.sign(distance) * (1 - 1 / ((Math.abs(distance) * 0.55) / RUBBER_LIMIT + 1)) * RUBBER_LIMIT;
-  /* Its inverse: how far past the end gives this offset. */
-  const distanceFor = (shift) => Math.sign(shift) * ((1 / (1 - Math.min(Math.abs(shift), RUBBER_LIMIT - 1) / RUBBER_LIMIT) - 1) * RUBBER_LIMIT) / 0.55;
-  const currentShift = () => new DOMMatrixReadOnly(getComputedStyle(page).transform).m42;
+  const paint = () => {
+    if (amount < 0.002) {
+      amount = 0;
+      edge = null;
+      page.style.transform = "";
+      page.style.transformOrigin = "";
+      return;
+    }
+    page.style.transformOrigin = edge === "top" ? "50% 0" : "50% 100%";
+    page.style.transform = `scaleY(${(1 + amount * STRETCH_MAX).toFixed(5)})`;
+  };
 
-  const springBack = () => {
-    const from = offset(pull);
-    pull = 0;
-    page.getAnimations().forEach((animation) => animation.cancel());
-    page.style.transform = "";
-    if (Math.abs(from) < 0.5) return;
-    page.animate([{ transform: `translateY(${from}px)` }, { transform: "none" }], { duration: SPRING_MS, easing: SPRING });
+  const relax = (now) => {
+    const dt = Math.min(64, now - last);
+    last = now;
+    amount *= Math.exp(-dt / STRETCH_RELAX_MS);
+    paint();
+    frame = amount ? requestAnimationFrame(relax) : null;
   };
 
   window.addEventListener(
@@ -933,29 +1043,23 @@ function rubberBandScrolling() {
       const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
       const atTop = window.scrollY <= 0;
       const atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1;
-      const pastTop = delta < 0 && atTop && pull >= 0;
-      const pastBottom = delta > 0 && atBottom && pull <= 0;
+      const towards = delta < 0 && atTop ? "top" : delta > 0 && atBottom ? "bottom" : null;
+      /* Only past an end, and never flipping edges while a stretch is still easing out. */
+      if (!towards || (edge && edge !== towards)) return;
 
-      if (!pastTop && !pastBottom) {
-        if (pull) springBack(); // scrolling back the other way lets go at once
-        return;
+      edge = towards;
+      amount = Math.min(1, amount + Math.abs(delta) * STRETCH_PER_PX * (1 - amount));
+      paint();
+      if (!frame) {
+        last = performance.now();
+        frame = requestAnimationFrame(relax);
       }
-      /* Pushed again mid-spring: carry on from where the page visibly is. */
-      const springing = page.getAnimations();
-      if (springing.length) {
-        pull = distanceFor(currentShift());
-        springing.forEach((animation) => animation.cancel());
-      }
-      pull -= delta;
-      page.style.transform = `translateY(${offset(pull).toFixed(1)}px)`;
-      clearTimeout(release);
-      release = setTimeout(springBack, RUBBER_RELEASE_MS);
     },
     { passive: true },
   );
 }
 
-rubberBandScrolling();
+overscrollStretch();
 
 /* Start once the first data has rendered, so nothing animates on page load.
  * Alarm rows keep their element while open; events are matched by their text. */
@@ -1048,7 +1152,7 @@ thresholdsForm.addEventListener("submit", (event) => {
   const changed = JSON.stringify(values) !== JSON.stringify(state.thresholds);
   state.thresholds = values;
   saveThresholds(values);
-  if (changed) logEvent(Date.now(), "info", "Thresholds updated");
+  if (changed) logEvent(Date.now(), "info", "Limits updated");
   update();
 });
 
@@ -1112,8 +1216,8 @@ function drawChart(plot, metric, points, range) {
   }
 
   const ticks = [
-    { t: t0, text: "6 h ago", anchor: "start" },
-    { t: t0 + (t1 - t0) / 2, text: "3 h ago", anchor: "middle" },
+    { t: t0, text: fmtShortTime(t0), anchor: "start" },
+    { t: t0 + (t1 - t0) / 2, text: fmtShortTime(t0 + (t1 - t0) / 2), anchor: "middle" },
     { t: t1, text: "Now", anchor: "end" },
   ];
   for (const tick of ticks) {
@@ -1145,6 +1249,13 @@ function drawChart(plot, metric, points, range) {
     pen = true;
   }
   root.append(svg("path", { class: "chart-line", d }));
+  /* Red only on the part of the line outside the limits, as on the overview. */
+  const clip = svg("clipPath", { id: `chart-out-${metric}` });
+  clip.append(
+    svg("rect", { x: 0, y: 0, width, height: y(range.max) }),
+    svg("rect", { x: 0, y: y(range.min), width, height: Math.max(0, height - y(range.min)) }),
+  );
+  root.append(clip, svg("path", { class: "chart-line chart-line-out", "clip-path": `url(#chart-out-${metric})`, d }));
 
   if (lastValidIndex >= 0) {
     const last = points[lastValidIndex];
@@ -1326,7 +1437,6 @@ function applyTheme(theme, save) {
   toggle.setAttribute("aria-label", `Switch to ${next} mode`);
   toggle.title = `Switch to ${next} mode`;
   setIcon($("use", toggle), next === "light" ? "#i-sun" : "#i-moon");
-  setText($("#theme-label"), next === "light" ? "Light" : "Dark");
   if (save) {
     try {
       localStorage.setItem(THEME_KEY, theme);

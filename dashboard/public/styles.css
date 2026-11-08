@@ -21,7 +21,7 @@
   --accent: #4a8ad6;
   --positive: #44a282;
   --negative: #e5566f;
-  --negative-wash: rgba(229, 86, 111, 0.14);
+  --negative-wash: rgba(229, 86, 111, 0.12);
   --warning: #d9a441;
   --line: #f2f2f3;
   --grid: #2a292e;
@@ -49,7 +49,7 @@
   --positive: #1e7b4f;
   --negative: #c4242a;
   --negative-wash: rgba(196, 36, 42, 0.08);
-  --warning: #92400e;
+  --warning: #946000;
   --line: #111113;
   --grid: #e8e8eb;
   --band: rgba(30, 123, 79, 0.12);
@@ -82,6 +82,12 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  scrollbar-color: var(--control) var(--ground);
+}
+
+::selection {
+  background: var(--accent);
+  color: #ffffff;
 }
 
 body {
@@ -217,6 +223,11 @@ a {
   cursor: pointer;
 }
 
+.rail a:focus-visible,
+.theme-toggle:focus-visible {
+  outline-offset: -2px;
+}
+
 .rail a:hover,
 .theme-toggle:hover {
   color: var(--text);
@@ -269,34 +280,47 @@ a {
   margin-bottom: 24px;
 }
 
-.crumb {
-  margin-bottom: 4px;
-  color: var(--muted);
-  font-size: 12px;
+.title-row > div:first-child {
+  min-width: 0;
 }
 
-.title-row h1 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 26px;
-  line-height: 32px;
+.crumb {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.crumb span {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The answer to "are the cards safe?" is the largest thing on the page. */
+.verdict {
+  font-size: 24px;
+  line-height: 30px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  text-wrap: balance;
 }
 
-.finding {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 14px;
+.verdict[data-tone="positive"] {
+  color: var(--positive);
 }
 
-.finding[data-tone="negative"] {
+.verdict[data-tone="negative"] {
   color: var(--negative);
 }
 
-.finding[data-tone="warning"] {
+.verdict[data-tone="warning"] {
   color: var(--warning);
+}
+
+.finding {
+  min-height: 20px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .title-actions {
@@ -304,6 +328,7 @@ a {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
+  flex-shrink: 0;
   gap: 12px 20px;
   margin-left: auto;
 }
@@ -339,7 +364,7 @@ a {
   height: 34px;
   padding: 0 16px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--invert-bg);
   color: var(--invert-ink);
   font-weight: 600;
@@ -359,8 +384,7 @@ a {
 .btn-invert[aria-disabled="true"] {
   background: none;
   color: var(--muted);
-  outline: 1px solid var(--control);
-  outline-offset: -1px;
+  box-shadow: inset 0 0 0 1px var(--control);
   cursor: default;
 }
 
@@ -407,6 +431,9 @@ a {
 }
 
 .link {
+  display: inline-block;
+  margin-block: -4px;
+  padding-block: 4px;
   color: var(--text);
   font-weight: 500;
   text-decoration: none;
@@ -571,7 +598,7 @@ a {
   stroke-linejoin: round;
 }
 
-.t-line[data-over] {
+.t-line-out {
   stroke: var(--negative);
 }
 
@@ -641,7 +668,8 @@ a {
   font-weight: 500;
 }
 
-.alarm-rows .t[data-severity="breach"] {
+.alarm-rows .t[data-severity="breach"],
+.alarm-rows .t[data-severity="limit"] {
   color: var(--negative);
 }
 
@@ -717,7 +745,8 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
-.event[data-kind="breach"] .event-text {
+.event[data-kind="breach"] .event-text,
+.event[data-kind="limit"] .event-text {
   color: var(--negative);
 }
 
@@ -741,12 +770,16 @@ a {
 
 @media (max-width: 1100px) {
   .cols {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .side-stack {
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
+  }
+
+  .side-stack > :last-child {
+    grid-column: 1 / -1;
   }
 }
 
@@ -760,8 +793,28 @@ a {
   }
 
   .app {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     padding-bottom: 64px;
+  }
+
+  /* One column, with Alarms above the charts whenever any are open. */
+  .cols {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .side-stack {
+    display: contents;
+  }
+
+  .cols[data-alarming] .alarms-panel {
+    order: -1;
+  }
+
+  .verdict {
+    font-size: 22px;
+    line-height: 28px;
   }
 
   /* The rail becomes a bottom bar with short labels. */
@@ -828,7 +881,7 @@ a {
   }
 
   .lanes {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .lane-label {
@@ -1233,6 +1286,10 @@ a {
   stroke-linejoin: round;
 }
 
+.chart-line-out {
+  stroke: var(--negative);
+}
+
 .chart-dot {
   fill: var(--line);
   stroke: var(--surface);
@@ -1314,13 +1371,34 @@ a {
 
 /* ---------- Motion and forced colours ---------- */
 
+/* Touch: comfortable targets, and inputs large enough that iOS won't zoom. */
+@media (max-width: 760px), (pointer: coarse) {
+  .btn-invert {
+    height: 44px;
+  }
+
+  .btn,
+  .threshold input {
+    min-height: 44px;
+  }
+
+  .threshold input {
+    font-size: 16px;
+  }
+
+  .link {
+    margin-block: -12px;
+    padding-block: 12px;
+  }
+}
+
 /* ---------- Motion ---------- */
 
 /* Status colours ease instead of snapping (a reading crossing a limit, the feed
  * going stale, the lid word changing). */
 .feed i,
 .feed span,
-.finding,
+.verdict,
 .lane-label .value,
 .lane-label .note,
 .seal-word {

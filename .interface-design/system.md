@@ -11,11 +11,12 @@ lid lane, then the temperature, humidity and light tracks, all on the same x sca
 event lines up with its effect (the lid opens, light jumps). Every figure is in IBM Plex Mono
 so digits stack; text is Public Sans. Colour goes on data and status only.
 
-- **The finding comes first.** The line under the title says what matters now ("Lid open
-  since 12:12", "Humidity above 55 % RH since 14:40", "No data since 14:41").
+- **The verdict comes first.** The largest text on the page answers "are the cards safe?": "Cards
+  sealed · all within limits", "Lid open · 2 readings out of limits", "Disconnected · lid last seen
+  open". One line under it gives the worst alarm and "+N more". It also goes in the tab title.
 - **Never healthy by default.** Data that isn't current turns grey and reads "Last known · not
   current"; missing readings show "—"; the lid reads "Unknown" with its last known state; a gap
-  in the feed is hatched on every lane.
+  in the feed is hatched on every lane, and the lid lane is only green where there's data for it.
 - **Lid open is unmissable.** The lid's label cell gets a red border and a red wash, the word
   and its "Open for 2m 05s" counter turn red, and the lane shows a red block.
 - **Acknowledging never hides anything.** Acknowledged alarms stay listed ("Acknowledged 12:14 ·
@@ -28,14 +29,14 @@ so digits stack; text is Public Sans. Colour goes on data and status only.
    event log), Limits (opens thresholds), and the theme toggle at the bottom. The current item
    is marked by a 1px accent line on the rail's edge. On a phone it becomes a bottom bar with
    short labels.
-2. **Title row:** "RelicGuard · CG2271 B01 Group 2", the h1 "Card Showcase" (plus a "Demo data"
-   tag in demo mode), the finding line; on the right the Data picker, the feed (dot, Live /
-   Stale / Disconnected, last sample time) and Acknowledge as an inverted pill (quiet and
-   aria-disabled when there is nothing to acknowledge).
+2. **Title row:** the identity line (RelicGuard · Card Showcase · CG2271 B01 Group 2), the verdict
+   (h1, 24/600, 22 on a phone), the line of why; on the right the feed (dot, Live / Stale /
+   Disconnected, last sample time) and Acknowledge (quiet and aria-disabled when there is nothing to
+   acknowledge).
 3. **Lid and Climate panel:** a 196px label column (name and limits, the value in mono, a status
    note) beside each plot. The lid lane is a green track with red blocks for openings, labelled
    with time and duration; labels that would collide fall back to the time or are dropped.
-   Tracks: a 2px line (red when out of limits, grey when stale), the safe band between the
+   Tracks: a 2px line (red only where it is out of limits, grey when stale), the safe band between the
    limits in a faint green, the limits dashed, round ticks on a 40px lane at the right. Hour
    labels run underneath.
 4. **Right column (400px):** Alarms (rows, then lid-open time and count over the last 6 h),
@@ -58,9 +59,10 @@ nothing loops. Curve: `--ease-out` (cubic-bezier(0.23, 1, 0.32, 1)); rows use a 
 - **Dialogs:** fade and rise in (200ms), fade out (150ms), backdrop with them.
 - **Status colours** (feed, readings, finding, lid word) ease over 240ms.
 - **Rail icons:** scale to 0.88 while pressed (120ms).
-- **Page ends:** scrolling a wheel or touchpad past the top or bottom pulls the page with
-  rubber-band resistance (about 30px for one notch, never more than 64px) and it springs back.
-  Windows and Linux only: macOS, iOS and Android already do this natively.
+- **Page ends:** scrolling a wheel or touchpad past the top or bottom stretches the page towards
+  that edge (scaleY, about 5% for one notch, at most 8%, with resistance), relaxing back every frame so it never
+  sticks; it eases out in under half a second once input stops. Windows and Linux only: macOS, iOS and
+  Android already do this natively.
 - **Reduced motion:** fades only; no ring, slides, drops or height easing.
 
 Prototype with on/off switches for each: `design-demos/motion/`.
@@ -77,8 +79,8 @@ system preference decides.
 | Text / muted | #ffffff / #8a8c92 | #111113 / #5f6168 |
 | Accent (selection only) | #4a8ad6 | #2f6fbf |
 | Positive (closed lid, safe band) | #44a282 | #1e7b4f |
-| Negative (lid open, out of limits) | #e5566f | #c4242a |
-| Warning (feed, stale) | #d9a441 | #92400e |
+| Negative (lid open, out of limits, everywhere) | #e5566f | #c4242a |
+| Warning (data trust only: feed, stale) | #d9a441 | #946000 |
 | Data line | #f2f2f3 | #111113 |
 
 Panels: 6px radius; dark panels have a soft shadow and no border, light panels a 1px edge and no
