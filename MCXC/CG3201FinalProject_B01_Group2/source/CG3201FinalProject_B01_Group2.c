@@ -100,14 +100,14 @@
 
 #define LIGHT_SAMPLE_MS     100U
 
-/* Person 4: two-point light calibration (relative brightness, not lux).
+/* Two-point light calibration (relative brightness, not lux).
  * Read "Light raw (filtered)" on the serial console with the sensor fully
  * covered (DARK) and with a phone torch about 5 cm away (BRIGHT), then put
  * those two numbers here. Either order works: some modules read LOWER when
  * brighter. Until calibrated, brightness equals the raw ADC percentage.
  */
-#define LIGHT_DARK_RAW      0U
-#define LIGHT_BRIGHT_RAW    4095U
+#define LIGHT_DARK_RAW      110U
+#define LIGHT_BRIGHT_RAW    4010U
 #define DHT_SAMPLE_MS       2000U
 #define PRINT_SAMPLE_MS     1000U
 
@@ -420,7 +420,10 @@ static bool ADC_Init(void) {
      * This makes initialization deterministic, not a proven fix for a zero
      * sensor output. Keep the shared reference used by the working joystick.
      */
+
     LIGHT_PORT->PCR[LIGHT_PIN] = PORT_PCR_MUX(0U);
+    /* KY-018: S -> A0, "-" -> 3.3 V, middle -> GND, plus an extra resistor
+     * from S to GND on the breadboard. Brighter light = higher raw value. */
     PORTB->PCR[JOY_X_PIN] = PORT_PCR_MUX(0U);
     PORTB->PCR[JOY_Y_PIN] = PORT_PCR_MUX(0U);
     GPIOB->PDDR &= ~((1UL << LIGHT_PIN) | (1UL << JOY_X_PIN) | (1UL << JOY_Y_PIN));

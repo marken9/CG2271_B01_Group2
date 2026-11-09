@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Person 4: environmental warnings and relative light exposure.
+/* Environmental warnings and relative light exposure.
  *
  * Pure logic: no hardware or RTOS calls, so it can be tested on a host
  * (tests/test_env_warning.c). ControlTask calls EnvWarning_Update() and
