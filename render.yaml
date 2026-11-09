@@ -1,0 +1,19 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: relicguard-dashboard
+    runtime: node
+    plan: free
+    rootDir: dashboard
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Secret the ESP32 sends as "Authorization: Bearer <token>".
+      - key: INGEST_TOKEN
+        sync: false
+      # Supabase session pooler connection string (keeps history across restarts).
+      - key: DATABASE_URL
+        sync: false

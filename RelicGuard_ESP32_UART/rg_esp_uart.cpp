@@ -11,17 +11,23 @@
 static HardwareSerial mcx(1);
 static RG_Link linkState;
 static RG_Parser parser;
-static QueueHandle_t commands, climateQueue, motionQueue, resultQueue;
+static QueueHandle_t commands, climateQueue, motionQueue, resultQueue, armResultQueue;
 static SemaphoreHandle_t stateMutex;
 static RG_ConfirmedState confirmed={};
 struct Climate {bool valid;int16_t t;uint16_t h;uint32_t at;};
 struct Motion {bool valid,moving;uint32_t at;};
 struct Command {char type;char payload[RG_PAYLOAD_MAX+1];uint32_t queuedAt;};
+/* Dashboard arm results go to the uplink task, not the general result queue. */
+static void reportResult(char type,uint32_t seq,int code) {
+    RG_CommandResult r={type,seq,code};
+    if (type=='D') {xQueueOverwrite(armResultQueue,&r);return;}
+    if (xQueueSend(resultQueue,&r,0)!=pdTRUE)
+        Serial.println("UART result queue full: consumer must drain it");
+}
 static void discardQueuedCommands() {
     Command cmd;
     while (xQueueReceive(commands,&cmd,0)==pdTRUE) {
-        RG_CommandResult r={cmd.type,0,-3};
-        xQueueSend(resultQueue,&r,0);
+        reportResult(cmd.type,0,-3);
     }
 }
 static bool sendFrame(void *,const RG_Frame *f) {
@@ -35,7 +41,7 @@ static bool data(void *,const RG_Frame *f) {
     if (!RG_Numbers(f->payload,v,12)) return false;
     const unsigned flags[]={0,1,2,6,7,10};
     for (unsigned i:flags) if (v[i]<0||v[i]>1) return false;
-    if (v[3]<0||v[3]>30000||v[4]<0||v[4]>3||v[5]<0||v[5]>255||
+    if (v[3]<0||v[3]>30000||v[4]<0||v[4]>4||v[5]<0||v[5]>255||
         v[8]<0||v[8]>4095||v[9]<0||v[9]>100||v[11]<0) return false;
     xSemaphoreTake(stateMutex,portMAX_DELAY);
     confirmed.stateValid=true;confirmed.receivedAt=millis();
@@ -46,9 +52,7 @@ static bool data(void *,const RG_Frame *f) {
     xSemaphoreGive(stateMutex);return true;
 }
 static void result(void *,uint32_t seq,int code) {
-    RG_CommandResult r={linkState.pending.type,seq,code};
-    if (xQueueSend(resultQueue,&r,0)!=pdTRUE)
-        Serial.println("UART result queue full: consumer must drain it");
+    reportResult(linkState.pending.type,seq,code);
     Serial.printf("UART command seq=%lu result=%d (0=applied, -1=ACK timeout/UNKNOWN, -2=link lost/UNKNOWN)\n",
                   (unsigned long)seq,code);
     /* A timeout is an UNKNOWN outcome: never create a fresh access request
@@ -100,8 +104,7 @@ static void communicationTask(void *) {
                 if (linkState.online&&(uint32_t)(now-cmd.queuedAt)<2000U)
                     RG_Request(&linkState,cmd.type,cmd.payload,now);
                 else {
-                    RG_CommandResult r={cmd.type,0,-3};
-                    xQueueSend(resultQueue,&r,0);
+                    reportResult(cmd.type,0,-3);
                     Serial.println("UART queued command discarded: offline or older than 2 s");
                 }
             }
@@ -112,9 +115,10 @@ static void communicationTask(void *) {
 bool RG_ESP_Begin() {
     commands=xQueueCreate(8,sizeof(Command));
     resultQueue=xQueueCreate(12,sizeof(RG_CommandResult));
+    armResultQueue=xQueueCreate(1,sizeof(RG_CommandResult));
     climateQueue=xQueueCreate(1,sizeof(Climate));motionQueue=xQueueCreate(1,sizeof(Motion));
     stateMutex=xSemaphoreCreateMutex();
-    if (!commands||!climateQueue||!motionQueue||!stateMutex||!resultQueue) return false;
+    if (!commands||!climateQueue||!motionQueue||!stateMutex||!resultQueue||!armResultQueue) return false;
     mcx.setRxBufferSize(1024);mcx.setTxBufferSize(512);
     mcx.begin(115200,SERIAL_8N1,16,17);
     RG_LinkInit(&linkState,esp_random(),nullptr,sendFrame,data,nullptr,result);
@@ -142,6 +146,10 @@ bool RG_ESP_SetLimits(int tl,int th,int hl,int hh,int light,int exposure) {
     char p[RG_PAYLOAD_MAX+1];snprintf(p,sizeof(p),"%d,%d,%d,%d,%d,%d",tl,th,hl,hh,light,exposure);
     return enqueue('L',p);
 }
+bool RG_ESP_SubmitArmCode(bool arm,const char *moves) {
+    char p[RG_PAYLOAD_MAX+1];snprintf(p,sizeof(p),"%u,%s",arm?1U:0U,moves);
+    return enqueue('D',p);
+}
 void RG_ESP_GetConfirmed(RG_ConfirmedState *s) {
     if (!stateMutex) {*s={};return;}
     xSemaphoreTake(stateMutex,portMAX_DELAY);*s=confirmed;xSemaphoreGive(stateMutex);
@@ -155,4 +163,7 @@ void RG_ESP_GetConfirmed(RG_ConfirmedState *s) {
 }
 bool RG_ESP_TakeCommandResult(RG_CommandResult *r) {
     return resultQueue&&xQueueReceive(resultQueue,r,0)==pdTRUE;
+}
+bool RG_ESP_TakeArmResult(RG_CommandResult *r) {
+    return armResultQueue&&xQueueReceive(armResultQueue,r,0)==pdTRUE;
 }

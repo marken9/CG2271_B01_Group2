@@ -13,6 +13,11 @@ static const JoystickDirection password[PASSWORD_LENGTH] = {
     JOY_UP, JOY_DOWN, JOY_LEFT, JOY_RIGHT
 };
 
+/* Toggles the system between armed and disarmed. */
+static const JoystickDirection armCode[PASSWORD_LENGTH] = {
+    JOY_RIGHT, JOY_LEFT, JOY_DOWN, JOY_UP
+};
+
 JoystickDirection Joystick_Classify(uint16_t x, uint16_t y)
 {
     bool xCenter = x >= JOY_CENTER_LOW && x <= JOY_CENTER_HIGH;
@@ -60,13 +65,42 @@ void Password_Append(PasswordEntry *entry, JoystickDirection direction)
     entry->digits[entry->length++] = direction;
 }
 
-bool Password_Check(const PasswordEntry *entry)
+static bool Password_Matches(const PasswordEntry *entry, const JoystickDirection *code)
 {
     if (entry->overflow || entry->length != PASSWORD_LENGTH) return false;
     for (uint8_t i = 0; i < PASSWORD_LENGTH; i++) {
-        if (entry->digits[i] != password[i]) return false;
+        if (entry->digits[i] != code[i]) return false;
     }
     return true;
+}
+
+bool Password_Check(const PasswordEntry *entry)
+{
+    return Password_Matches(entry, password);
+}
+
+bool Password_ParseRemote(const char *text, PasswordEntry *entry, bool *arm)
+{
+    if ((text[0] != '0' && text[0] != '1') || text[1] != ',') return false;
+    PasswordEntry parsed = {0};
+    for (const char *c = text + 2; *c != '\0'; c++) {
+        switch (*c) {
+            case 'U': Password_Append(&parsed, JOY_UP); break;
+            case 'D': Password_Append(&parsed, JOY_DOWN); break;
+            case 'L': Password_Append(&parsed, JOY_LEFT); break;
+            case 'R': Password_Append(&parsed, JOY_RIGHT); break;
+            default: return false;
+        }
+    }
+    if (parsed.overflow || parsed.length != PASSWORD_LENGTH) return false;
+    *entry = parsed;
+    *arm = text[0] == '1';
+    return true;
+}
+
+bool Password_CheckArmCode(const PasswordEntry *entry)
+{
+    return Password_Matches(entry, armCode);
 }
 
 const char *Joystick_DirectionName(JoystickDirection direction)

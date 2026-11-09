@@ -1,9 +1,10 @@
 #include "alarm.h"
 
-uint8_t Alarm_Update(Alarm *alarm, bool doorValid, bool doorOpen,
+uint8_t Alarm_Update(Alarm *alarm, bool armed, bool doorValid, bool doorOpen,
                      bool accessGranted, uint32_t now, uint32_t halfPeriod)
 {
-    AlarmState next = accessGranted ? ALARM_ACCESS_GRANTED :
+    AlarmState next = !armed ? ALARM_DISARMED :
+                      accessGranted ? ALARM_ACCESS_GRANTED :
                       !doorValid ? ALARM_WAITING :
                       !doorOpen ? ALARM_DOOR_CLOSED : ALARM_UNAUTHORIZED_OPEN;
     if (next != alarm->state) {
@@ -11,6 +12,7 @@ uint8_t Alarm_Update(Alarm *alarm, bool doorValid, bool doorOpen,
         alarm->phaseStarted = now;
         alarm->blinkOn = true;
     }
+    if (next == ALARM_DISARMED) return ALARM_LED_GREEN; /* Solid; blinking green is access. */
     if (next == ALARM_DOOR_CLOSED) return ALARM_LED_BLUE;
     if (next != ALARM_UNAUTHORIZED_OPEN && next != ALARM_ACCESS_GRANTED) return ALARM_LED_OFF;
 
@@ -29,6 +31,7 @@ uint8_t Alarm_Update(Alarm *alarm, bool doorValid, bool doorOpen,
 const char *Alarm_StateName(AlarmState state)
 {
     switch (state) {
+        case ALARM_DISARMED: return "DISARMED - SOLID GREEN";
         case ALARM_DOOR_CLOSED: return "DOOR CLOSED - BLUE";
         case ALARM_ACCESS_GRANTED: return "ACCESS GRANTED - GREEN BLINKING";
         case ALARM_UNAUTHORIZED_OPEN: return "ALARM - RED BLINKING";

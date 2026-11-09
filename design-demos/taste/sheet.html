@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Showcase · RelicGuard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Framed sheet. Face: the frame tinted a low green-grey, as for a climate tool; teal on the main series.
+ * Overview pattern "current deploy and health lead", here "current seal and climate lead".
+ * Grid: 1440 − 228 sidebar − 8 inset = 1204 sheet; − 2 × 24 padding = 1156 content;
+ * the chart row 2fr 1fr with a 24px gap: 754.67 + 24 + 377.33 = 1156. */
+:root {
+  --ground: #f2f5f3;
+  --surface: #ffffff;
+  --raised: #f4f6f5;
+  --active: #e6ebe8;
+  --border: #e8eaec;
+  --rule: #f0f1f2;
+  --control: #cdced1;
+  --text: #131416;
+  --muted: #5d5f60;
+  --accent: #1b6c80;
+  --primary: #1d1f20;
+  --positive: #1e7b4f;
+  --negative: #c4242a;
+  --warning: #92400e;
+  --chart-1: #1b6c80;
+  --chart-mark: #c4242a;
+  --chart-span: 0.08;
+  --grid: #eceeef;
+  --axis-ink: #5d5f60;
+  --ink: #131416;
+  --seal-track: #131416;
+  --pill-positive-bg: #dcfae5; --pill-positive-ink: #04250e;
+  --pill-negative-bg: #ffedea; --pill-negative-ink: #831c1e;
+  --pill-warning-bg: #fffbeb; --pill-warning-ink: #92400e;
+  --pill-neutral-bg: #ebedee; --pill-neutral-ink: #353736;
+  --radius-card: 8px;
+  --radius-control: 6px;
+  --radius-sheet: 16px;
+  --gap: 24px;
+  --pad: 24px;
+  --font: "IBM Plex Sans", Inter, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--ground); color: var(--text); font: 400 14px/20px var(--font); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p, ol, ul, dl, dd { margin: 0; }
+ol, ul { padding: 0; list-style: none; }
+button { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The L-frame: sidebar and top bar on one tint, no rule between them; the sheet inset 8px. */
+.app { display: grid; grid-template-columns: 228px minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); min-height: 100dvh; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 20px; font-weight: 600; }
+.brand svg { width: 22px; height: 22px; }
+.top { display: flex; align-items: center; gap: 16px; padding: 0 16px 0 0; color: var(--muted); }
+.switcher { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: var(--radius-control); background: none; color: var(--text); cursor: pointer; }
+.switcher:hover { background: var(--active); }
+.top .feed { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.top .feed i { width: 8px; height: 8px; border-radius: 50%; background: var(--positive); }
+.top .feed[data-tone="warning"] i { background: none; box-shadow: inset 0 0 0 2px #b26a00; }
+.side { padding: 8px 12px; display: flex; flex-direction: column; }
+.side a { display: flex; align-items: center; gap: 10px; height: 32px; margin-bottom: 2px; padding: 0 10px; border-radius: var(--radius-control); color: var(--muted); text-decoration: none; }
+.side a svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.side a:hover { color: var(--text); }
+.side a[aria-current] { background: var(--active); color: var(--text); font-weight: 500; }
+.side .group { margin: 24px 10px 8px; color: var(--muted); font-size: 12px; }
+.sheet { margin: 0 8px 8px 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sheet); padding: var(--pad); min-width: 0; display: grid; gap: var(--gap); align-content: start; }
+
+/* Title row */
+.crumb { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.title-row { display: flex; align-items: flex-end; gap: 16px; }
+.title-row h1 { display: flex; align-items: center; gap: 10px; font-size: 22px; line-height: 28px; font-weight: 600; }
+.title-row p { margin-top: 4px; color: var(--muted); }
+.title-row .actions { margin-left: auto; display: flex; gap: 8px; }
+.btn { height: 32px; padding: 0 12px; border: 1px solid var(--control); border-radius: var(--radius-control); background: var(--surface); cursor: pointer; font-weight: 500; transition: transform 120ms; }
+a.btn { display: inline-flex; align-items: center; color: var(--text); text-decoration: none; }
+.btn:hover { background: var(--raised); }
+.btn:active { transform: scale(.97); }
+.btn-primary { border-color: var(--primary); background: var(--primary); color: #fff; }
+.btn-primary:hover { background: #33363a; }
+.pill { flex: none; display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.pill[data-tone="positive"] { background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
+.pill[data-tone="negative"] { background: var(--pill-negative-bg); color: var(--pill-negative-ink); }
+.pill[data-tone="warning"] { background: var(--pill-warning-bg); color: var(--pill-warning-ink); }
+.pill[data-tone="neutral"] { background: var(--pill-neutral-bg); color: var(--pill-neutral-ink); }
+
+.card { border: 1px solid var(--border); border-radius: var(--radius-card); min-width: 0; }
+.card-head { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 0; }
+.card-head h2 { font-size: 16px; line-height: 24px; font-weight: 600; }
+.card-head .meta { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+/* Seal now: the two states and four facts, then the timeline */
+.now { display: grid; grid-template-columns: minmax(0, 1fr) repeat(4, 150px); }
+.now-states { display: flex; gap: 40px; padding: 16px 20px; }
+.now-states dt { color: var(--muted); font-size: 12px; }
+.now-states dd { font-size: 16px; line-height: 24px; font-weight: 600; }
+.now-states dd span { display: block; color: var(--muted); font-size: 13px; font-weight: 400; }
+.now-states [data-tone="negative"] dd { color: var(--negative); }
+.now-states [data-tone="unknown"] dd { color: var(--muted); }
+.fact { padding: 16px 20px; border-left: 1px solid var(--rule); }
+.fact dt { color: var(--muted); font-size: 12px; }
+.fact dd { margin-top: 2px; font-size: 16px; line-height: 24px; }
+.seal-wrap { padding: 4px 20px 16px; }
+
+/* KPIs as the chart's tabs, in one divided container */
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 1.2fr; }
+.kpi { position: relative; padding: 14px 20px; border: 0; border-left: 1px solid var(--rule); background: none; text-align: left; cursor: pointer; }
+.kpi:first-child { border-left: 0; }
+.kpi:hover { background: var(--raised); }
+.kpi .label { font-size: 13px; font-weight: 500; color: var(--muted); }
+.kpi[aria-selected="true"] .label { color: var(--text); font-weight: 600; }
+.kpi[aria-selected="true"]::after { content: ""; position: absolute; left: 20px; right: 20px; bottom: -1px; height: 2px; background: var(--accent); }
+.kpi .value { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; font-size: 28px; line-height: 34px; }
+.kpi .value small { color: var(--muted); font-size: 14px; }
+.kpi .delta { color: var(--muted); font-size: 12px; }
+.kpi .delta[data-bad] { color: var(--negative); }
+.kpi[data-tone="unknown"] .value { color: var(--muted); }
+.kpi.feed-cell { cursor: default; }
+.kpi.feed-cell .value { font-size: 22px; }
+.kpi.feed-cell:hover { background: none; }
+
+.row { display: grid; grid-template-columns: 2fr 1fr; gap: var(--gap); align-items: stretch; }
+.chart-box { padding: 8px 20px 16px; }
+.why { display: flex; flex-direction: column; }
+.why-body { padding: 12px 20px 16px; display: grid; gap: 14px; }
+.why-body p { color: var(--muted); }
+.why-body b { color: var(--text); font-weight: 600; }
+.why-foot { margin-top: auto; padding: 0 20px 16px; }
+
+/* Events table: rules and alignment */
+table { width: 100%; margin-bottom: 8px; border-collapse: collapse; }
+th { height: 36px; padding: 0 20px; color: var(--muted); font-size: 12px; font-weight: 400; text-align: left; }
+td { height: 44px; padding: 0 20px; border-top: 1px solid var(--rule); }
+th.num, td.num { text-align: right; }
+td .sev { display: inline-block; width: 8px; height: 8px; margin-right: 10px; border-radius: 50%; background: #c9cccd; }
+td .sev[data-kind="breach"] { background: var(--negative); }
+td .sev[data-kind="caution"] { background: #b26a00; }
+td.muted { color: var(--muted); }
+
+.menu { display: none; }
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 1fr; }
+  .side { display: none; }
+  .brand { grid-column: 1; grid-row: 1; position: relative; z-index: 1; width: fit-content; padding: 0 16px; }
+  .top { grid-column: 1; grid-row: 1; padding-left: 150px; }
+  .sheet { grid-column: 1; margin: 0; border-radius: 0; border-width: 1px 0 0; }
+  .now { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .now-states { grid-column: 1 / -1; }
+  .fact { border-left: 0; border-top: 1px solid var(--rule); }
+  .row { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .top { padding-left: 132px; }
+  .top .switcher { display: none; }
+  .sheet { padding: 16px; }
+  .title-row { flex-wrap: wrap; align-items: flex-start; }
+  .title-row .actions { margin-left: 0; }
+  .kpis { grid-template-columns: 1fr 1fr; }
+  .kpi { border-top: 1px solid var(--rule); }
+  .kpi:nth-child(odd) { border-left: 0; }
+  .kpi:nth-child(-n + 2) { border-top: 0; }
+  .kpi[aria-selected="true"] { background: var(--raised); }
+  .kpi[aria-selected="true"]::after { display: none; }
+  th.hide, td.hide { display: none; }
+  td, th { padding: 0 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 7h18" stroke="#1b6c80" stroke-width="2.4"/><path d="M6 13.5h12" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2 2"/></svg>
+    <span translate="no">RelicGuard</span>
+  </div>
+  <div class="top">
+    <button class="switcher" type="button">CG2271 Group 2 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+    <span class="feed num" id="feed"><i></i><span></span></span>
+  </div>
+  <nav class="side" aria-label="Screens">
+    <a href="#" aria-current="page"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4z"/></svg>Overview</a>
+    <a href="#history"><svg viewBox="0 0 24 24"><path d="M4 18 9 12l4 3 7-9"/></svg>History</a>
+    <a href="#events"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>Event log</a>
+    <p class="group">Showcase</p>
+    <a href="#limits"><svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Limits</a>
+    <a href="#sensors"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9z"/></svg>Sensors</a>
+  </nav>
+
+  <main class="sheet">
+    <header>
+      <p class="crumb">CG2271 Group 2 / Bench 2</p>
+      <div class="title-row">
+        <div>
+          <h1>Card Showcase <span class="pill" id="status"></span></h1>
+          <p id="finding"></p>
+        </div>
+        <div class="actions">
+          <a class="btn" href="#history">History</a>
+          <button class="btn btn-primary" type="button" id="ack" hidden></button>
+        </div>
+      </div>
+    </header>
+
+    <section class="card" aria-labelledby="now-title">
+      <h2 class="visually-hidden" id="now-title" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Seal now</h2>
+      <dl class="now">
+        <div class="now-states">
+          <div id="lid"><dt>Lid · reed switch</dt><dd></dd></div>
+          <div id="beam"><dt>Laser beam</dt><dd></dd></div>
+        </div>
+        <div class="fact"><dt>Lid open today</dt><dd class="num" id="f-open"></dd></div>
+        <div class="fact"><dt>Times opened</dt><dd class="num" id="f-opens"></dd></div>
+        <div class="fact"><dt>Beam trips</dt><dd class="num" id="f-trips"></dd></div>
+        <div class="fact"><dt>Out of limits</dt><dd class="num" id="f-out"></dd></div>
+      </dl>
+      <div class="seal-wrap"><div id="seal-strip"></div></div>
+    </section>
+
+    <section class="card" aria-label="Climate">
+      <div class="kpis" role="tablist" aria-label="Reading shown in the chart" id="kpis"></div>
+    </section>
+
+    <div class="row">
+      <section class="card" aria-labelledby="chart-title">
+        <div class="card-head"><h2 id="chart-title"></h2><span class="meta" id="chart-meta"></span></div>
+        <div class="chart-box"><div id="chart"></div></div>
+      </section>
+      <section class="card why" aria-labelledby="why-title">
+        <div class="card-head"><h2 id="why-title">What’s behind it</h2></div>
+        <div class="why-body" id="why"></div>
+        <div class="why-foot" id="why-foot"></div>
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="events-title">
+      <div class="card-head"><h2 id="events-title">Today’s events</h2><span class="meta" id="events-meta"></span></div>
+      <table>
+        <thead><tr><th style="width:110px">Time</th><th>Event</th><th class="hide">Sensor</th><th class="num">Duration</th></tr></thead>
+        <tbody id="events"></tbody>
+      </table>
+    </section>
+  </main>
+</div>
+
+<script src="data.js"></script>
+<script src="charts.js"></script>
+<script src="seal.js"></script>
+<script>
+const { data: d, fmt, view } = RG;
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const TICKS = { temperature: [16, 20, 24, 28], humidity: [30, 40, 50, 60, 70], light: [0, 50, 100, 150, 200] };
+const HOUR = 12; // points per hour
+/* The chart opens on the reading that is out of limits, if any. */
+let selected = d.alarms.find((a) => d.metrics[a.key])?.key ?? "temperature";
+
+function renderHeader() {
+  const status = view.status(d);
+  Object.assign($("#status"), { textContent: status.text }).dataset.tone = status.tone;
+  $("#finding").textContent = view.finding(d);
+  const feed = view.feed(d);
+  $("#feed").dataset.tone = feed.tone;
+  $("#feed span").textContent = `${feed.text} · ${feed.sub}`;
+  const open = d.alarms.filter((a) => !a.acked).length;
+  $("#ack").hidden = !open;
+  $("#ack").textContent = `Acknowledge ${open}`;
+}
+
+function renderNow() {
+  const seal = view.seal(d);
+  for (const key of ["lid", "beam"]) {
+    $(`#${key}`).dataset.tone = seal[key].tone;
+    $(`#${key} dd`).innerHTML = `${seal[key].text}<span class="num">${esc(seal[key].sub)}</span>`;
+  }
+  $("#f-open").textContent = fmt.duration(d.today.lidOpenMs);
+  $("#f-opens").textContent = d.today.lidOpens;
+  $("#f-trips").textContent = d.today.beamTrips;
+  $("#f-out").textContent = d.today.outOfLimitsMs ? fmt.duration(d.today.outOfLimitsMs) : "0 m";
+  Seal.draw($("#seal-strip"), d, { lane: 20, gap: 12 });
+}
+
+/* Change over the last hour, in words, red only when it moved towards a limit it now breaks. */
+function delta(metric) {
+  const pts = d.history[metric];
+  const last = pts.findLastIndex((p) => p.v != null);
+  const before = pts[last - HOUR]?.v, now = pts[last].v;
+  if (before == null || now == null) return { text: "—", bad: false };
+  const change = now - before;
+  const shown = fmt.value(metric, Math.abs(change));
+  const bad = now > d.limits[metric].max && change > 0;
+  return { text: Number(shown) === 0 ? "No change in the last hour" : `${change > 0 ? "+" : "−"}${shown} in the last hour`, bad };
+}
+
+function renderKpis() {
+  const feed = view.feed(d);
+  $("#kpis").innerHTML = ["temperature", "humidity", "light"].map((m) => {
+    const meta = d.metrics[m], st = view.reading(d, m), dl = delta(m);
+    return `<button class="kpi" role="tab" data-metric="${m}" data-tone="${st.tone}" aria-selected="${m === selected}">
+      <span class="label">${meta.label}</span>
+      <span class="value num">${fmt.value(m, d.reading[m])}<small>${meta.unit}</small></span>
+      <span class="delta num" ${dl.bad ? "data-bad" : ""}>${st.tone === "unknown" ? st.text : dl.text}</span>
+    </button>`;
+  }).join("") + `<div class="kpi feed-cell"><span class="label">Sensor feed</span><span class="value">${feed.text}</span><span class="delta num">${feed.sub} · every 2 s</span></div>`;
+  for (const b of document.querySelectorAll(".kpi[role=tab]")) b.addEventListener("click", () => { selected = b.dataset.metric; renderKpis(); renderChart(); });
+}
+
+function renderChart() {
+  const meta = d.metrics[selected], lim = d.limits[selected];
+  $("#chart-title").textContent = `${meta.label}, last 6 hours`;
+  $("#chart-meta").textContent = `Limits ${lim.min}–${lim.max} ${meta.unit} · 5-minute averages`;
+  const labels = d.history[selected].map((p) => fmt.time(p.t));
+  const idx = (t) => Math.max(0, Math.min(labels.length - 1, Math.round((t - d.start) / d.step)));
+  const refs = [{ value: lim.max, label: `Upper ${lim.max}` }];
+  if (lim.min > 0) refs.push({ value: lim.min, label: `Lower ${lim.min}` });
+  Charts.line($("#chart"), {
+    labels,
+    series: [{ name: meta.label, values: d.history[selected].map((p) => p.v) }],
+    format: Charts.fmt.dec(meta.decimals),
+    tickFormat: Charts.fmt.int,
+    yTicks: TICKS[selected],
+    height: 200,
+    reference: refs,
+    xAt: d.evenHours,
+    annotations: d.lid.map((s) => ({ from: idx(s.from), to: Math.max(idx(s.to ?? d.now), idx(s.from) + 1), label: s.to ? "Lid open" : "Lid open now" })),
+  });
+}
+
+function renderWhy() {
+  const out = d.alarms.find((a) => d.metrics[a.key]);
+  const openLid = d.lid.find((s) => s.to == null);
+  let html;
+  if (d.feed === "offline") {
+    html = `<p><b>The board stopped sending at ${fmt.time(d.feedLostAt)}.</b> Readings after that are not shown; the last ones were within limits and the lid was closed.</p><p>Check the ESP32's Wi-Fi and power, then the server's logs.</p>`;
+  } else if (out) {
+    const rise = d.history[out.key].find((p) => p.t >= d.now - 50 * 60 * 1000);
+    html = `<p><b>${d.metrics[out.key].label} has risen ${fmt.value(out.key, d.reading[out.key] - rise.v)} ${d.metrics[out.key].unit} in 50 minutes</b> and crossed ${d.limits[out.key].max} at ${fmt.time(out.since)}.</p>${openLid ? `<p>The lid has been open since ${fmt.time(openLid.from)}, which lets room air in. Closing it should bring humidity back down.</p>` : ""}`;
+  } else if (openLid) {
+    html = `<p><b>The lid has been open since ${fmt.time(openLid.from)}.</b> Readings are within limits.</p>`;
+  } else {
+    html = `<p><b>Nothing is out of limits.</b> The last alarm was the lid, opened at ${fmt.time(d.lastLid.from)} and closed after ${fmt.duration(d.lastLid.to - d.lastLid.from)}.</p><p>Humidity has stayed between ${Math.min(...d.history.humidity.map((p) => p.v))} and ${Math.max(...d.history.humidity.map((p) => p.v))} % RH all afternoon.</p>`;
+  }
+  $("#why").innerHTML = html;
+  $("#why-foot").innerHTML = `<a class="btn" href="#limits">Review limits</a>`;
+}
+
+const SENSOR = { "Lid": "Reed switch", "Laser": "Laser tripwire", "Beam": "Laser tripwire", "Humidity": "DHT11", "Temperature": "DHT11", "Light": "Photoresistor", "Sensor": "ESP32 uplink", "Acknowledged:": "—" };
+function renderEvents() {
+  const rows = d.events.slice(0, 6);
+  $("#events-meta").innerHTML = `${rows.length} of ${d.events.length} · <a href="#events" style="color:inherit">View all</a>`;
+  $("#events").innerHTML = rows.map((e) => {
+    const word = e.text.split(" ")[0];
+    const dur = /after (.+)$/.exec(e.text)?.[1];
+    return `<tr><td class="num">${fmt.timeSec(e.at)}</td><td><span class="sev" data-kind="${e.kind}"></span>${esc(e.text.replace(/ after .+$/, ""))}</td><td class="hide muted">${SENSOR[word] ?? "—"}</td><td class="num muted">${dur ?? "—"}</td></tr>`;
+  }).join("");
+}
+
+$("#ack").addEventListener("click", () => {
+  for (const a of d.alarms) if (!a.acked) { a.acked = true; d.events.unshift({ at: d.now, kind: "ack", text: `Acknowledged: ${a.title.toLowerCase()}` }); }
+  renderHeader();
+  renderEvents();
+});
+
+renderHeader();
+renderNow();
+renderKpis();
+renderChart();
+renderWhy();
+renderEvents();
+</script>
+</body>
+</html>

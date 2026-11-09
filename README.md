@@ -17,12 +17,20 @@ environmental warnings are documented in `docs/person4-env-warnings.md`.
 | Closed | Not granted | Solid blue | Silent |
 | Either | Granted | Green blinking: 250 ms on, 250 ms off | Silent |
 | Open | Not granted | Red blinking: 250 ms on, 250 ms off | Continuous 2 kHz tone |
+| Either (disarmed) | Either | Solid green | Silent |
 
 Closing the door clears the alarm immediately after debounce. A correct
 passcode also clears an ongoing alarm and starts green blinking, whether the
 door is open or closed. If the 30-second grant expires while open, red blinking
 starts again; if closed, the LED returns to solid blue. Closing does not
 cancel the remaining grant: reopening within that window stays authorized.
+
+The arm code (RIGHT, LEFT, DOWN, UP, then press) toggles between armed and
+disarmed. While disarmed the lid is ignored until the arm code is entered again.
+Arming with the lid open and no access grant starts the alarm immediately. The
+system starts armed after every reset, and the arm code does not affect a
+running access grant. Change it with `armCode` in `joystick_password.c`.
+The dashboard's D-pad sends the same code through the ESP32; the MCX checks it.
 
 ### Passive buzzer wiring and test
 

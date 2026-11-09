@@ -1,0 +1,270 @@
+/*
+ * Motion prototypes for the RelicGuard dashboard.
+ *
+ * Each proposal is switched by a class on <html> (on by default, toggled from
+ * the prototype panel) so it can be judged against no motion at all:
+ *   m-lid     lid opens: the cell eases to red and one ring goes out twice
+ *   m-rows    new alarm and event rows enter; the rows below slide down (FLIP)
+ *   m-theme   theme switch cross-fades (View Transitions) instead of flashing
+ *   m-dialog  dialogs fade in and, now, out; the backdrop fades with them
+ *   m-status  status colours (feed, readings, lid word) ease instead of snap
+ *   m-press   rail icons give press feedback
+ * Transform and opacity only, except the short colour eases. Reduced motion
+ * keeps the fades and drops the travel. Curve: the dashboard's --ease-out.
+ */
+
+/* ---------- 1. Lid opens ---------- */
+
+.m-lid .lid-label {
+  position: relative;
+  transition: background-color 240ms var(--ease-out), box-shadow 240ms var(--ease-out);
+}
+
+.m-lid .lid-label.lid-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px var(--negative);
+  pointer-events: none;
+  animation: lid-ring 800ms var(--ease-out) 2;
+}
+
+/* About 8px of travel on every side of a 196×86 cell. */
+@keyframes lid-ring {
+  from {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.08, 1.18);
+  }
+}
+
+/* ---------- 2. Rows enter, leave and slide (motion.js) ---------- */
+
+/* Rows grow from their top edge, so the drop reads as falling into place. */
+.m-rows .alarm-rows li,
+.m-rows .event {
+  transform-origin: 50% 0;
+}
+
+.row-ghosts {
+  position: absolute;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+/* ---------- 3. Theme cross-fade ---------- */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 240ms;
+  animation-timing-function: var(--ease-out);
+}
+
+/* ---------- 4. Dialog enter and exit ---------- */
+
+.m-dialog .sheet[open] {
+  animation: none;
+}
+
+.m-dialog .sheet {
+  opacity: 0;
+  transform: translateY(4px) scale(0.98);
+  transition:
+    opacity 150ms var(--ease-out),
+    transform 150ms var(--ease-out),
+    overlay 150ms allow-discrete,
+    display 150ms allow-discrete;
+}
+
+.m-dialog .sheet[open] {
+  opacity: 1;
+  transform: none;
+  transition-duration: 200ms;
+}
+
+@starting-style {
+  .m-dialog .sheet[open] {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+.m-dialog .sheet::backdrop {
+  opacity: 0;
+  transition:
+    opacity 150ms var(--ease-out),
+    overlay 150ms allow-discrete,
+    display 150ms allow-discrete;
+}
+
+.m-dialog .sheet[open]::backdrop {
+  opacity: 1;
+  transition-duration: 200ms;
+}
+
+@starting-style {
+  .m-dialog .sheet[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/* ---------- 5. Status colours ease ---------- */
+
+.m-status .feed i,
+.m-status .feed span,
+.m-status .lane-label .value,
+.m-status .lane-label .note,
+.m-status .seal-word,
+.m-status .finding {
+  transition:
+    color 240ms var(--ease-out),
+    background-color 240ms var(--ease-out),
+    outline-color 240ms var(--ease-out);
+}
+
+/* ---------- 6. Press feedback on the rail ---------- */
+
+.m-press .rail a .icon,
+.m-press .theme-toggle .icon {
+  transition: transform 120ms var(--ease-out);
+}
+
+.m-press .rail a:active .icon,
+.m-press .theme-toggle:active .icon {
+  transform: scale(0.88);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .m-press .rail a,
+  .m-press .theme-toggle {
+    transition: color 120ms var(--ease-out);
+  }
+}
+
+/* ---------- Reduced motion: keep the fades, drop the travel ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .m-lid .lid-label.lid-ring::after {
+    animation: none;
+  }
+
+  .m-dialog .sheet,
+  .m-dialog .sheet[open] {
+    transform: none;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 150ms;
+  }
+}
+
+/* The panel's "preview reduced motion" switch applies the same rules. */
+.m-reduced .lid-label.lid-ring::after {
+  animation: none;
+}
+
+.m-reduced .sheet,
+.m-reduced .sheet[open] {
+  transform: none;
+}
+
+
+/* ---------- Prototype panel (not part of the design) ---------- */
+
+.proto {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  width: 320px;
+  padding: 14px 16px;
+  border: 1px solid var(--control);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+
+.proto summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.proto summary h2 {
+  display: inline;
+}
+
+.proto[open] summary {
+  margin-bottom: 4px;
+}
+
+.proto h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.proto > p {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.proto-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-top: 1px solid var(--rule);
+}
+
+.proto-row label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.proto-row input {
+  accent-color: var(--accent);
+}
+
+.proto-row button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--control);
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.proto-row button:hover {
+  background: var(--raised);
+}
+
+.proto-row button:active {
+  transform: scale(0.96);
+}
+
+.proto-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .proto {
+    right: 8px;
+    bottom: 68px;
+    left: 8px;
+    width: auto;
+  }
+}

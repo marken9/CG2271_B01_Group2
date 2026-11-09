@@ -39,3 +39,10 @@ __pycache__/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Design tool working files
+.taste-skill/
+.impeccable/
+
+# ESP32 Wi-Fi and dashboard secrets
+RelicGuard_ESP32_UART/rg_secrets.h

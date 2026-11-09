@@ -29,6 +29,7 @@
 #define MCX_ALARM_DOOR_CLOSED       1
 #define MCX_ALARM_ACCESS_GRANTED    2
 #define MCX_ALARM_UNAUTHORIZED_OPEN 3
+#define MCX_ALARM_DISARMED          4
 
 // ============================================================
 // SCREEN LAYOUT (text size 1 = 6 x 8 pixels, 21 characters a line)
@@ -110,11 +111,13 @@ static void drawStatus(const RG_ConfirmedState &st, uint32_t now)
         return;
     }
 
-    if (st.accessGranted) {
+    if (st.alarm == MCX_ALARM_DISARMED) {
+        textAt(Y_STATUS_1, "DISARMED");
+    } else if (st.accessGranted) {
         unsigned long secs = (st.accessRemainingMs + 999UL) / 1000UL;
         snprintf(line, sizeof(line), "ACCESS GRANTED %2lus", secs);
         textAt(Y_STATUS_1, line);
-    } else if (st.alarm >= MCX_ALARM_UNAUTHORIZED_OPEN) {
+    } else if (st.alarm == MCX_ALARM_UNAUTHORIZED_OPEN) {
         // Flash the alarm line twice a second so it stands out.
         bool flashOn = ((now / 500UL) % 2UL) == 0UL;
         textAt(Y_STATUS_1, "!! SECURITY ALARM !!", flashOn);

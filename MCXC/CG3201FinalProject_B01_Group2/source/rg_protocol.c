@@ -106,7 +106,7 @@ bool RG_SendData(RG_Link *l, char type, const char *p) {
 }
 bool RG_Request(RG_Link *l, char type, const char *p, uint32_t now) {
     if (!l->online || l->pendingActive || strlen(p)>RG_PAYLOAD_MAX ||
-        (type!='R'&&type!='L'&&type!='M')) return false;
+        (type!='R'&&type!='L'&&type!='M'&&type!='D')) return false;
     l->pending=make(l,type,p);l->pendingActive=true;l->attempts=1;l->sentAt=now;
     l->send(l->ctx,&l->pending);return true;
 }
@@ -146,14 +146,14 @@ void RG_Receive(RG_Link *l,const RG_Frame *f,uint32_t now) {
         uint32_t session;int32_t result;
         if (strlen(f->payload)<10 || f->payload[8]!=',' ||
             !hex(f->payload,8,&session) ||
-            !RG_Numbers(f->payload+9,&result,1) || result<0 || result>RG_OLD) return;
+            !RG_Numbers(f->payload+9,&result,1) || result<0 || result>RG_WRONG_CODE) return;
         if (l->pendingActive && session==l->session && f->seq==l->pending.seq) {
             l->pendingActive=false;
             if (l->result) l->result(l->ctx,f->seq,(int)result);
         }
         l->lastRx=now;return;
     }
-    if (f->type=='M'||f->type=='R'||f->type=='L') {
+    if (f->type=='M'||f->type=='R'||f->type=='L'||f->type=='D') {
         l->lastRx=now;
         if (l->incomingActive) {
             if (same(f,&l->incoming)) {l->duplicates++;return;}

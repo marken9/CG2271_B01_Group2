@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Card Showcase · RelicGuard</title>
+  <meta name="description" content="Environmental and security monitoring for the RelicGuard card showcase box.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#171719">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <script>
+    /* Set the theme before the first paint: the saved choice, else the system's. */
+    (() => {
+      let theme = null;
+      try { theme = localStorage.getItem("relicguard.theme"); } catch {}
+      if (theme !== "light" && theme !== "dark") theme = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9H4z"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="i-caution" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5"/><path d="M12 17.5h.01"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+  </svg>
+
+  <a class="skip-link" href="#overview">Skip to Readings</a>
+
+  <div class="app">
+    <nav class="rail" aria-label="Screens">
+      <svg class="mark" viewBox="0 0 24 24" role="img" aria-label="RelicGuard"><rect x="3" y="7" width="18" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 7h18" style="stroke: var(--accent)" stroke-width="2.2"/><path d="M6 13.5h12" style="stroke: var(--negative)" stroke-width="1.2" stroke-dasharray="2 2"/></svg>
+      <a href="#" aria-current="page" title="Overview"><svg class="icon" aria-hidden="true"><use href="#i-home"></use></svg><span>Overview</span></a>
+      <a href="#history" title="History and event log"><svg class="icon" aria-hidden="true"><use href="#i-history"></use></svg><span>History</span></a>
+      <a href="#thresholds" title="Limits"><svg class="icon" aria-hidden="true"><use href="#i-sliders"></use></svg><span>Limits</span></a>
+      <button class="theme-toggle" type="button" id="theme-toggle"><svg class="icon" aria-hidden="true"><use href="#i-sun"></use></svg><span>Theme</span></button>
+    </nav>
+
+    <main class="canvas" id="overview" tabindex="-1">
+      <header class="title-row">
+        <div>
+          <p class="crumb"><span translate="no">RelicGuard</span> · Card Showcase · CG2271 B01 Group 2</p>
+          <h1 class="verdict" id="verdict" data-tone="warning" aria-live="polite">Connecting…</h1>
+          <p class="finding" id="finding"></p>
+        </div>
+        <div class="title-actions">
+          <p class="feed" id="feed" data-feed="offline">
+            <i aria-hidden="true"></i>
+            <span id="feed-label">Connecting…</span>
+            <time class="fig" id="updated-at" hidden></time>
+          </p>
+          <button class="btn" type="button" id="arm-toggle" aria-disabled="true">Disarm</button>
+          <button class="btn-invert" type="button" id="ack-all" aria-disabled="true"><span id="ack-label">Acknowledge</span></button>
+        </div>
+      </header>
+
+      <div class="cols">
+        <section class="panel" aria-labelledby="lanes-title">
+          <div class="panel-head">
+            <h2 id="lanes-title">Lid and Climate</h2>
+            <div class="timescale" id="timescale" role="radiogroup" aria-label="Time range">
+              <label><input type="radio" name="timescale" value="auto" checked /><span>Auto</span></label>
+              <label><input type="radio" name="timescale" value="30m" /><span>30 min</span></label>
+              <label><input type="radio" name="timescale" value="1h" /><span>1 h</span></label>
+              <label><input type="radio" name="timescale" value="3h" /><span>3 h</span></label>
+              <label><input type="radio" name="timescale" value="6h" /><span>6 h</span></label>
+            </div>
+          </div>
+          <div class="lanes" id="lanes">
+            <div class="lane-label lid-label" id="lid-label" data-state="unknown">
+              <p class="name">Lid · reed switch</p>
+              <p class="seal-word" data-field="text">Unknown</p>
+              <p class="note fig" data-field="sub"></p>
+            </div>
+            <div class="lane-plot seal-plot" id="lid-plot" aria-hidden="true"></div>
+            <div class="lane-label" data-metric="temperature" data-state="missing">
+              <p class="name">Temperature · <span class="fig" data-field="limits"></span></p>
+              <p class="value fig"><span data-field="value">—</span><small>°C</small></p>
+              <p class="note" data-field="status">Waiting for first sample…</p>
+            </div>
+            <div class="lane-plot" data-track="temperature" aria-hidden="true"></div>
+            <div class="lane-label" data-metric="humidity" data-state="missing">
+              <p class="name">Humidity · <span class="fig" data-field="limits"></span></p>
+              <p class="value fig"><span data-field="value">—</span><small>%&nbsp;RH</small></p>
+              <p class="note" data-field="status">Waiting for first sample…</p>
+            </div>
+            <div class="lane-plot" data-track="humidity" aria-hidden="true"></div>
+            <div class="lane-label" data-metric="light" data-state="missing">
+              <p class="name">Light · <span class="fig" data-field="limits"></span></p>
+              <p class="value fig"><span data-field="value">—</span><small>%</small></p>
+              <p class="note" data-field="status">Waiting for first sample…</p>
+            </div>
+            <div class="lane-plot" data-track="light" aria-hidden="true"></div>
+            <div class="lane-spacer"></div>
+            <div class="axis-row" id="axis" aria-hidden="true"></div>
+          </div>
+        </section>
+
+        <div class="side-stack">
+          <section class="panel alarms-panel" aria-labelledby="alarms-title">
+            <div class="panel-head">
+              <h2 id="alarms-title">Alarms</h2>
+              <span class="meta fig" id="alarm-count"></span>
+            </div>
+            <ul class="alarm-rows" id="alarm-list" aria-live="polite"></ul>
+            <dl class="kv" id="lid-today"></dl>
+          </section>
+
+          <section class="panel" aria-labelledby="events-title">
+            <div class="panel-head">
+              <h2 id="events-title">Recent Events</h2>
+              <a class="link meta" href="#history" id="events-all">All events</a>
+            </div>
+            <ol class="list" id="event-list"></ol>
+          </section>
+
+          <section class="panel" aria-labelledby="sensors-title">
+            <div class="panel-head">
+              <h2 id="sensors-title">Sensors</h2>
+              <span class="meta">Readings every 2 s</span>
+            </div>
+            <dl class="kv kv-flush" id="sensors"></dl>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <dialog class="sheet" id="thresholds-dialog" aria-labelledby="thresholds-title">
+    <form method="dialog" id="thresholds-form" novalidate>
+      <header class="sheet-head">
+        <h2 id="thresholds-title">Limits</h2>
+        <button class="btn-icon" type="submit" value="cancel" formnovalidate aria-label="Close">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </header>
+
+      <div class="sheet-body">
+        <p class="sheet-note">
+          <svg class="icon" aria-hidden="true"><use href="#i-caution"></use></svg>
+          <span>The defaults are <strong>starting values</strong> for testing, not conservation standards. Set ranges that suit your collection. Limits are saved on this device only, so other viewers keep their own.</span>
+        </p>
+
+        <fieldset class="threshold" data-metric="temperature">
+          <legend>Temperature <span class="unit">°C</span></legend>
+          <label>Minimum <input type="number" name="temperature-min" step="0.5" inputmode="decimal" autocomplete="off" required></label>
+          <label>Maximum <input type="number" name="temperature-max" step="0.5" inputmode="decimal" autocomplete="off" required></label>
+          <p class="field-error" aria-live="polite" hidden></p>
+        </fieldset>
+
+        <fieldset class="threshold" data-metric="humidity">
+          <legend>Humidity <span class="unit">%&nbsp;RH</span></legend>
+          <label>Minimum <input type="number" name="humidity-min" step="1" min="0" max="100" inputmode="decimal" autocomplete="off" required></label>
+          <label>Maximum <input type="number" name="humidity-max" step="1" min="0" max="100" inputmode="decimal" autocomplete="off" required></label>
+          <p class="field-error" aria-live="polite" hidden></p>
+        </fieldset>
+
+        <fieldset class="threshold" data-metric="light">
+          <legend>Light <span class="unit">%</span></legend>
+          <label>Minimum <input type="number" name="light-min" step="5" min="0" inputmode="numeric" autocomplete="off" required></label>
+          <label>Maximum <input type="number" name="light-max" step="5" min="0" inputmode="numeric" autocomplete="off" required></label>
+          <p class="field-error" aria-live="polite" hidden></p>
+        </fieldset>
+      </div>
+
+      <footer class="sheet-foot">
+        <button class="btn btn-quiet" type="button" id="thresholds-reset">Restore Defaults</button>
+        <span class="sheet-foot-spacer"></span>
+        <button class="btn" type="submit" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn btn-primary" type="submit" value="save">Save Limits</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog class="sheet sheet-narrow" id="arm-dialog" aria-labelledby="arm-title">
+    <form method="dialog">
+      <header class="sheet-head">
+        <h2 id="arm-title">Disarm the alarm</h2>
+        <button class="btn-icon" type="submit" value="close" aria-label="Close">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </header>
+    </form>
+    <div class="sheet-body arm-body">
+      <p class="arm-message" id="arm-message" role="status"></p>
+      <div class="arm-dots" id="arm-dots" role="img" aria-label="0 of 4 moves entered"><i></i><i></i><i></i><i></i></div>
+      <div class="arm-pad">
+        <button class="arm-key" type="button" data-move="U" aria-label="Up"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+        <button class="arm-key" type="button" data-move="L" aria-label="Left"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+        <button class="arm-key arm-ok" type="button" id="arm-ok" aria-disabled="true">OK</button>
+        <button class="arm-key" type="button" data-move="R" aria-label="Right"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+        <button class="arm-key" type="button" data-move="D" aria-label="Down"><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg></button>
+      </div>
+      <button class="btn btn-quiet" type="button" id="arm-clear" aria-disabled="true">Clear</button>
+    </div>
+  </dialog>
+
+  <dialog class="sheet sheet-wide" id="history-dialog" aria-labelledby="history-title">
+    <form method="dialog">
+      <header class="sheet-head">
+        <div>
+          <h2 id="history-title">History</h2>
+          <p class="sheet-sub" id="history-sub">Last 6 hours · 5-minute averages</p>
+        </div>
+        <button class="btn-icon" type="submit" value="close" aria-label="Close">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </header>
+    </form>
+    <div class="sheet-body history-body" id="history-body"></div>
+  </dialog>
+</body>
+</html>

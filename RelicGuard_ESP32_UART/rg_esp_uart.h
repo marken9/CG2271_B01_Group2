@@ -14,7 +14,7 @@ struct RG_ConfirmedState {
 struct RG_CommandResult {
     char type;
     uint32_t sequence;
-    int result; /* 0=applied; 1..4=rejected; -1/-2=unknown; -3=not sent. */
+    int result; /* 0=applied; 1..5=rejected (5=wrong code); -1/-2=unknown; -3=not sent. */
 };
 bool RG_ESP_Begin();
 /* Thread safe, nonblocking queue writes. False means caller must handle failure.
@@ -29,4 +29,8 @@ bool RG_ESP_SetLimits(int tempLowX10,int tempHighX10,int humidityLowX10,
                      int humidityHighX10,int lightHighPercent,int exposureLimit);
 void RG_ESP_GetConfirmed(RG_ConfirmedState *state);
 bool RG_ESP_TakeCommandResult(RG_CommandResult *result);
+/* From the dashboard. moves is four of U, D, L, R. True means QUEUED, not applied. */
+bool RG_ESP_SubmitArmCode(bool arm,const char *moves);
+/* The result of the last RG_ESP_SubmitArmCode, kept apart from the results above. */
+bool RG_ESP_TakeArmResult(RG_CommandResult *result);
 #endif

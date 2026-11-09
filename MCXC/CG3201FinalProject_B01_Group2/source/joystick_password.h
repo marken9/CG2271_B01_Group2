@@ -30,6 +30,9 @@ JoystickDirection Joystick_Sample(JoystickFilter *filter, uint16_t x, uint16_t y
 void Password_Reset(PasswordEntry *entry);
 void Password_Append(PasswordEntry *entry, JoystickDirection direction);
 bool Password_Check(const PasswordEntry *entry);
+/* Parses a dashboard request, "0,RLDU": 0 disarm or 1 arm, then four moves. */
+bool Password_ParseRemote(const char *text, PasswordEntry *entry, bool *arm);
+bool Password_CheckArmCode(const PasswordEntry *entry);
 const char *Joystick_DirectionName(JoystickDirection direction);
 
 #endif
